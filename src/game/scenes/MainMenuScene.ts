@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import { MAX_HP_UPGRADE_CAP } from '../logic/metaProgression';
+import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
+import { ensureSceneRegistered } from './sceneLoader';
 import { createTextButton } from '../ui/createTextButton';
 
 export class MainMenuScene extends Phaser.Scene {
@@ -14,6 +17,7 @@ export class MainMenuScene extends Phaser.Scene {
 
   create(): void {
     this.drawBackground();
+    audioService.startMusic();
 
     this.add
       .text(GAME_WIDTH / 2, 88, 'Triangle Arena', {
@@ -58,13 +62,19 @@ export class MainMenuScene extends Phaser.Scene {
   private buildStatsText(): string {
     const p = progressStore.data;
     const sdkMode = yandexService.isMockMode() ? 'Mock SDK' : 'Yandex SDK';
+    const hpUpgradeStatus =
+      p.hpUpgradeLevel >= MAX_HP_UPGRADE_CAP
+        ? `+${p.hpUpgradeLevel} HP (MAX)`
+        : `+${p.hpUpgradeLevel} HP (next: ${progressStore.getNextHpUpgradeCost()} credits)`;
 
     return [
       `SDK: ${sdkMode}`,
       `Best Score: ${p.bestScore}`,
       `Wins: ${p.totalWins}`,
       `Losses: ${p.totalLosses}`,
-      `Total Kills: ${p.totalKills}`
+      `Total Kills: ${p.totalKills}`,
+      `Credits: ${p.credits}`,
+      `Hull Upgrade: ${hpUpgradeStatus}`
     ].join('\n');
   }
 
@@ -76,11 +86,15 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   private async startGame(): Promise<void> {
+    audioService.playUiClick();
+    await audioService.unlock();
+    await ensureSceneRegistered(this, 'GameScene', async () => (await import('./GameScene')).GameScene);
     await yandexService.showInterstitial();
     this.scene.start('GameScene');
   }
 
   private async showLeaderboard(): Promise<void> {
+    audioService.playUiClick();
     this.clearModal();
 
     const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
@@ -127,12 +141,13 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   private showSettings(): void {
+    audioService.playUiClick();
     this.clearModal();
 
     const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
     shadow.setInteractive({ useHandCursor: true });
 
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 330, 0x111827, 0.98);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 640, 420, 0x111827, 0.98);
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
 
     const title = this.add
@@ -151,22 +166,66 @@ export class MainMenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    const toggleSoundButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 30, 'Toggle Sound', () => {
-      progressStore.toggleSound();
+    const upgradeText = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 32, this.hpUpgradeLabel(), {
+        fontFamily: 'Arial',
+        fontSize: '22px',
+        color: '#bfdbfe',
+        align: 'center',
+        lineSpacing: 6
+      })
+      .setOrigin(0.5);
+
+    const toggleSoundButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 2, 'Toggle Sound', () => {
+      const enabled = progressStore.toggleSound();
+      audioService.setEnabled(enabled);
+      audioService.playUiClick();
       void progressStore.save();
       statusText.setText(this.soundLabel());
       this.refreshStats();
     });
 
-    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 112, 'Close', () => {
+    const upgradeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 104, 'Upgrade Hull', () => {
+      audioService.playUiClick();
+      if (!progressStore.purchaseHpUpgrade()) {
+        upgradeText.setText(this.hpUpgradeLabel('Not enough credits or upgrade is already maxed.'));
+        return;
+      }
+
+      void progressStore.save();
+      upgradeText.setText(this.hpUpgradeLabel('Upgrade purchased. +1 max HP will apply next run.'));
+      this.refreshStats();
+    });
+
+    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 188, 'Close', () => {
+      audioService.playUiClick();
       this.clearModal();
     });
 
-    this.modalObjects.push(shadow, panel, title, statusText, toggleSoundButton, closeButton);
+    this.modalObjects.push(
+      shadow,
+      panel,
+      title,
+      statusText,
+      upgradeText,
+      toggleSoundButton,
+      upgradeButton,
+      closeButton
+    );
   }
 
   private soundLabel(): string {
     return `Sound: ${progressStore.data.soundEnabled ? 'ON' : 'OFF'}`;
+  }
+
+  private hpUpgradeLabel(message = ''): string {
+    const { hpUpgradeLevel } = progressStore.data;
+    const summary =
+      hpUpgradeLevel >= MAX_HP_UPGRADE_CAP
+        ? `Hull Upgrade: +${hpUpgradeLevel} HP (MAXED)`
+        : `Hull Upgrade: +${hpUpgradeLevel} HP\nCost: ${progressStore.getNextHpUpgradeCost()} credits`;
+
+    return message ? `${summary}\n${message}` : summary;
   }
 
   private clearModal(): void {

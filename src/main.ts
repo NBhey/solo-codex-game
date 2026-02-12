@@ -3,9 +3,6 @@ import { GAME_HEIGHT, GAME_WIDTH } from './game/config/gameConfig';
 import { BootScene } from './game/scenes/BootScene';
 import { PreloaderScene } from './game/scenes/PreloaderScene';
 import { MainMenuScene } from './game/scenes/MainMenuScene';
-import { GameScene } from './game/scenes/GameScene';
-import { GameOverScene } from './game/scenes/GameOverScene';
-import { WinScene } from './game/scenes/WinScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -13,7 +10,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
   backgroundColor: '#0b1020',
-  scene: [BootScene, PreloaderScene, MainMenuScene, GameScene, GameOverScene, WinScene],
+  scene: [BootScene, PreloaderScene, MainMenuScene],
   physics: {
     default: 'arcade',
     arcade: {

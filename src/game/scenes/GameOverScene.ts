@@ -1,9 +1,14 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
-import { TextButton, createTextButton } from '../ui/createTextButton';
+import { audioService } from '../services/AudioService';
+import { createTextButton } from '../ui/createTextButton';
+import type { TextButton } from '../ui/createTextButton';
 
 interface GameOverData {
   kills?: number;
+  creditsEarned?: number;
+  waveReached?: number;
+  reviveUsed?: boolean;
 }
 
 interface GameSceneStartData {
@@ -19,6 +24,10 @@ export class GameOverScene extends Phaser.Scene {
 
   create(data: GameOverData): void {
     const kills = data.kills ?? 0;
+    const creditsEarned = data.creditsEarned ?? 0;
+    const waveReached = data.waveReached ?? 1;
+    const reviveUsed = Boolean(data.reviveUsed);
+    audioService.startMusic();
 
     this.cameras.main.setBackgroundColor(0x190b12);
 
@@ -31,11 +40,20 @@ export class GameOverScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 65, `Kills this run: ${kills}`, {
-        fontFamily: 'Arial',
-        fontSize: '28px',
-        color: '#fee2e2'
-      })
+      .text(
+        GAME_WIDTH / 2,
+        GAME_HEIGHT / 2 - 65,
+        `Kills this run: ${kills}\nWave reached: ${waveReached}\nCredits earned: ${creditsEarned}${
+          reviveUsed ? '\nRevive used: Yes' : ''
+        }`,
+        {
+          fontFamily: 'Arial',
+          fontSize: '28px',
+          color: '#fee2e2',
+          align: 'center',
+          lineSpacing: 6
+        }
+      )
       .setOrigin(0.5);
 
     this.statusText = this.add
@@ -46,12 +64,11 @@ export class GameOverScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    let restartButton: TextButton;
-    restartButton = createTextButton(
+    const restartButton = createTextButton(
       this,
       GAME_WIDTH / 2,
       GAME_HEIGHT / 2 + 84,
-      '\u041f\u043e\u043f\u0440\u043e\u0431\u043e\u0432\u0430\u0442\u044c \u0441\u043d\u043e\u0432\u0430',
+      'Play Again',
       () => {
         this.restartRun(restartButton);
       },
@@ -64,8 +81,9 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   private restartRun(button: TextButton): void {
+    audioService.playUiClick();
     button.setEnabled(false);
-    this.statusText?.setText('\u0420\u0435\u0441\u0442\u0430\u0440\u0442...');
+    this.statusText?.setText('Restarting...');
 
     const data: GameSceneStartData = {
       showInterstitialAfterRestart: true

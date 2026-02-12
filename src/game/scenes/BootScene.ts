@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
 
@@ -25,6 +26,7 @@ export class BootScene extends Phaser.Scene {
     try {
       await yandexService.init();
       await progressStore.load();
+      audioService.setEnabled(progressStore.data.soundEnabled);
     } catch (error) {
       console.error('[BootScene] Startup failed:', error);
     } finally {

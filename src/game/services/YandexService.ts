@@ -12,7 +12,23 @@ export interface LeaderboardRow {
   name: string;
 }
 
+export type AnalyticsValue = string | number | boolean | null;
+export type AnalyticsPayload = Record<string, AnalyticsValue>;
+
+interface AnalyticsEventRecord {
+  event: string;
+  payload: AnalyticsPayload;
+  timestamp: string;
+}
+
+interface MetricaWindow extends Window {
+  ym?: (...args: unknown[]) => void;
+}
+
 class YandexService {
+  private static readonly ANALYTICS_STORAGE_KEY = 'triangle-arena-analytics-events-v1';
+  private static readonly MAX_STORED_EVENTS = 80;
+
   private sdk?: YandexSDK;
   private player?: YandexPlayer;
   private storage?: YandexStorage;
@@ -232,6 +248,26 @@ class YandexService {
     }
   }
 
+  trackEvent(event: string, payload: AnalyticsPayload = {}): void {
+    const record: AnalyticsEventRecord = {
+      event,
+      payload,
+      timestamp: new Date().toISOString()
+    };
+
+    console.info('[Analytics event]', record);
+    this.persistAnalyticsEvent(record);
+
+    try {
+      const ym = (window as MetricaWindow).ym;
+      if (typeof ym === 'function') {
+        ym(0, 'reachGoal', event, payload);
+      }
+    } catch {
+      // Fail-safe no-op for platforms without Yandex Metrica.
+    }
+  }
+
   private mapLeaderboardEntry(entry: YandexLeaderboardEntry, index: number): LeaderboardRow {
     return {
       rank: typeof entry.rank === 'number' ? entry.rank : index + 1,
@@ -395,6 +431,20 @@ class YandexService {
 
   private mockLeaderboardKey(): string {
     return `mock-lb:${YANDEX_LEADERBOARD_NAME}`;
+  }
+
+  private persistAnalyticsEvent(record: AnalyticsEventRecord): void {
+    try {
+      const currentRaw = window.localStorage.getItem(YandexService.ANALYTICS_STORAGE_KEY);
+      const current = currentRaw ? (JSON.parse(currentRaw) as AnalyticsEventRecord[]) : [];
+      current.push(record);
+      if (current.length > YandexService.MAX_STORED_EVENTS) {
+        current.splice(0, current.length - YandexService.MAX_STORED_EVENTS);
+      }
+      window.localStorage.setItem(YandexService.ANALYTICS_STORAGE_KEY, JSON.stringify(current));
+    } catch {
+      // Ignore telemetry persistence failures.
+    }
   }
 
   private async safeAwait<T>(factory: () => Promise<T | undefined> | undefined): Promise<T | undefined> {

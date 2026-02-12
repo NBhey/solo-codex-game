@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { createTextButton } from '../ui/createTextButton';
 
@@ -7,6 +8,9 @@ interface WinData {
   kills?: number;
   score?: number;
   elapsedMs?: number;
+  creditsEarned?: number;
+  waveReached?: number;
+  reviveUsed?: boolean;
 }
 
 export class WinScene extends Phaser.Scene {
@@ -20,6 +24,10 @@ export class WinScene extends Phaser.Scene {
     const kills = data.kills ?? 0;
     const score = data.score ?? 0;
     const elapsedMs = data.elapsedMs ?? 0;
+    const creditsEarned = data.creditsEarned ?? 0;
+    const waveReached = data.waveReached ?? 1;
+    const reviveUsed = Boolean(data.reviveUsed);
+    audioService.startMusic();
 
     this.cameras.main.setBackgroundColor(0x061a12);
 
@@ -35,7 +43,9 @@ export class WinScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         160,
-        `Kills: ${kills} / 10\nScore: ${score}\nTime: ${(elapsedMs / 1000).toFixed(1)}s`,
+        `Kills: ${kills} / 10\nWave reached: ${waveReached}\nScore: ${score}\nCredits earned: ${creditsEarned}\nTime: ${(
+          elapsedMs / 1000
+        ).toFixed(1)}s${reviveUsed ? '\nRevive used: Yes' : ''}`,
         {
           fontFamily: 'Arial',
           fontSize: '28px',
@@ -61,6 +71,7 @@ export class WinScene extends Phaser.Scene {
     });
 
     createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT - 44, 'Main Menu', () => {
+      audioService.playUiClick();
       this.scene.start('MainMenuScene');
     });
 
@@ -68,6 +79,7 @@ export class WinScene extends Phaser.Scene {
   }
 
   private async restartRun(): Promise<void> {
+    audioService.playUiClick();
     await yandexService.showInterstitial();
     this.scene.start('GameScene');
   }

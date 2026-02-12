@@ -2,35 +2,51 @@ import Phaser from 'phaser';
 import {
   BULLET_LIFETIME_MS,
   ENEMY_BULLET_SPEED,
-  ENEMY_FIRE_MAX_MS,
-  ENEMY_FIRE_MIN_MS,
-  ENEMY_SPAWN_DELAY_MS,
   ENEMY_SPEED,
   GAME_HEIGHT,
   GAME_WIDTH,
   KILLS_TO_WIN,
-  MAX_ENEMIES_ON_FIELD,
   PLAYER_BULLET_SPEED,
   PLAYER_MAX_HP,
   PLAYER_SHOT_COOLDOWN_MS,
   PLAYER_SPEED
 } from '../config/gameConfig';
+import { getRunCreditsReward } from '../logic/metaProgression';
+import {
+  getEnemyFireDelayRange,
+  getWaveConfig,
+  pickEnemyPattern,
+  type EnemyPattern,
+  type WaveConfig
+} from '../logic/waveSystem';
+import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
+import { createTextButton } from '../ui/createTextButton';
+import type { TextButton } from '../ui/createTextButton';
+import { ensureSceneRegistered } from './sceneLoader';
 
 interface WinSceneData {
   kills: number;
   score: number;
   elapsedMs: number;
+  creditsEarned: number;
+  waveReached: number;
+  reviveUsed: boolean;
 }
 
 interface GameOverSceneData {
   kills: number;
+  creditsEarned: number;
+  waveReached: number;
+  reviveUsed: boolean;
 }
 
 interface GameSceneData {
   showInterstitialAfterRestart?: boolean;
 }
+
+type PauseState = 'none' | 'manual' | 'revive';
 
 export class GameScene extends Phaser.Scene {
   private static readonly PLAYER_TARGET_SIZE = 40;
@@ -47,15 +63,23 @@ export class GameScene extends Phaser.Scene {
   private keyA?: Phaser.Input.Keyboard.Key;
   private keyS?: Phaser.Input.Keyboard.Key;
   private keyD?: Phaser.Input.Keyboard.Key;
+  private keyPause?: Phaser.Input.Keyboard.Key;
+  private keyEscape?: Phaser.Input.Keyboard.Key;
 
   private kills = 0;
   private hp = PLAYER_MAX_HP;
+  private playerMaxHp = PLAYER_MAX_HP;
+  private wave = 1;
+  private waveConfig: WaveConfig = getWaveConfig(0);
 
   private killsText!: Phaser.GameObjects.Text;
   private hpText!: Phaser.GameObjects.Text;
+  private waveText!: Phaser.GameObjects.Text;
+  private creditsText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
 
   private lastShotAt = 0;
+  private lastEnemyShotSfxAt = 0;
   private spawnTimer?: Phaser.Time.TimerEvent;
   private startedAt = 0;
   private ending = false;
@@ -66,6 +90,13 @@ export class GameScene extends Phaser.Scene {
   private touchMoveTarget: Phaser.Math.Vector2 | null = null;
   private touchAim = new Phaser.Math.Vector2(GAME_WIDTH / 2, GAME_HEIGHT / 2);
   private touchAimActive = false;
+  private pauseState: PauseState = 'none';
+  private pauseOverlay?: Phaser.GameObjects.Container;
+  private reviveOverlay?: Phaser.GameObjects.Container;
+  private reviveStatusText?: Phaser.GameObjects.Text;
+  private reviveUsed = false;
+  private reviveOfferActive = false;
+  private pauseButton?: TextButton;
 
   constructor() {
     super('GameScene');
@@ -77,10 +108,11 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.resetRuntimeState();
+    this.playerMaxHp = progressStore.getPlayerMaxHp(PLAYER_MAX_HP);
+    this.hp = this.playerMaxHp;
     this.input.setDefaultCursor('crosshair');
     this.removePointerListeners();
     this.resolveShipTextures();
-
     this.drawBackground();
 
     this.player = this.physics.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, this.playerTextureKey);
@@ -96,6 +128,7 @@ export class GameScene extends Phaser.Scene {
     this.setupCollisions();
     this.createHud();
     this.bindInput();
+    audioService.startMusic();
 
     if (this.showInterstitialAfterRestart) {
       void this.startGameplayAfterRestartAd();
@@ -108,11 +141,14 @@ export class GameScene extends Phaser.Scene {
       this.input.setDefaultCursor('default');
       this.removePointerListeners();
       this.spawnTimer?.remove(false);
+      this.pauseOverlay?.destroy();
+      this.reviveOverlay?.destroy();
     });
   }
 
   update(): void {
-    if (this.ending || !this.gameplayStarted) {
+    this.handlePauseShortcuts();
+    if (this.ending || !this.gameplayStarted || this.pauseState !== 'none') {
       return;
     }
 
@@ -125,7 +161,11 @@ export class GameScene extends Phaser.Scene {
   private resetRuntimeState(): void {
     this.kills = 0;
     this.hp = PLAYER_MAX_HP;
+    this.playerMaxHp = PLAYER_MAX_HP;
+    this.wave = 1;
+    this.waveConfig = getWaveConfig(0);
     this.lastShotAt = 0;
+    this.lastEnemyShotSfxAt = 0;
     this.spawnTimer = undefined;
     this.startedAt = 0;
     this.ending = false;
@@ -134,12 +174,16 @@ export class GameScene extends Phaser.Scene {
     this.touchMoveTarget = null;
     this.touchAim.set(GAME_WIDTH / 2, GAME_HEIGHT / 2);
     this.touchAimActive = false;
+    this.pauseState = 'none';
+    this.reviveUsed = false;
+    this.reviveOfferActive = false;
   }
 
   private resolveShipTextures(): void {
     this.playerTextureKey = this.textures.exists('player-ship') ? 'player-ship' : 'player-triangle';
-
-    this.enemyTextureKeys = ['enemy-red-ship', 'enemy-yellow-ship'].filter((key) => this.textures.exists(key));
+    this.enemyTextureKeys = ['enemy-red-ship', 'enemy-yellow-ship'].filter((key) =>
+      this.textures.exists(key)
+    );
     if (!this.enemyTextureKeys.length) {
       this.enemyTextureKeys = ['enemy-triangle'];
     }
@@ -161,7 +205,6 @@ export class GameScene extends Phaser.Scene {
     if (!body) {
       return;
     }
-
     body.setSize(this.player.displayWidth * 0.72, this.player.displayHeight * 0.72, true);
   }
 
@@ -169,7 +212,6 @@ export class GameScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.fillGradientStyle(0x0b1020, 0x0b1020, 0x13203b, 0x13203b, 1);
     g.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-
     g.lineStyle(2, 0x1f3558, 0.7);
     for (let x = 0; x <= GAME_WIDTH; x += 80) {
       g.lineBetween(x, 0, x, GAME_HEIGHT);
@@ -186,6 +228,8 @@ export class GameScene extends Phaser.Scene {
       this.keyA = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
       this.keyS = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
       this.keyD = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+      this.keyPause = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+      this.keyEscape = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     }
 
     if (this.isTouchControls) {
@@ -206,7 +250,6 @@ export class GameScene extends Phaser.Scene {
       undefined,
       this
     );
-
     this.physics.add.overlap(
       this.enemyBullets,
       this.player,
@@ -214,7 +257,6 @@ export class GameScene extends Phaser.Scene {
       undefined,
       this
     );
-
     this.physics.add.overlap(
       this.enemies,
       this.player,
@@ -230,13 +272,21 @@ export class GameScene extends Phaser.Scene {
       fontSize: '24px',
       color: '#ecfeff'
     });
-
-    this.hpText = this.add.text(14, 42, `HP: ${this.hp}`, {
+    this.hpText = this.add.text(14, 42, `HP: ${this.hp}/${this.playerMaxHp}`, {
       fontFamily: 'Arial',
       fontSize: '24px',
       color: '#dcfce7'
     });
-
+    this.waveText = this.add.text(14, 72, `Wave: ${this.wave}`, {
+      fontFamily: 'Arial',
+      fontSize: '22px',
+      color: '#bfdbfe'
+    });
+    this.creditsText = this.add.text(14, 102, 'Run Credits: 0', {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: '#fef3c7'
+    });
     this.statusText = this.add
       .text(GAME_WIDTH / 2, 14, this.getControlsHint(), {
         fontFamily: 'Arial',
@@ -244,6 +294,11 @@ export class GameScene extends Phaser.Scene {
         color: '#dbeafe'
       })
       .setOrigin(0.5, 0);
+    this.pauseButton = createTextButton(this, GAME_WIDTH - 82, 30, 'Pause', () => {
+      audioService.playUiClick();
+      this.togglePause();
+    }, { width: 130, height: 42, fontSize: 18 });
+    this.pauseButton.setDepth(15);
   }
 
   private updatePlayerMovement(): void {
@@ -282,13 +337,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (this.pauseState !== 'none' || this.ending || !this.gameplayStarted) {
+      return;
+    }
+
     if (!this.isTouchControls) {
       this.tryShoot(pointer.worldX, pointer.worldY);
       return;
     }
 
-    const leftZone = pointer.x <= GAME_WIDTH * 0.5;
-    if (leftZone) {
+    if (pointer.x <= GAME_WIDTH * 0.5) {
       this.touchMovePointerId = pointer.id;
       if (this.touchMoveTarget) {
         this.touchMoveTarget.set(pointer.worldX, pointer.worldY);
@@ -304,7 +362,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
-    if (!this.isTouchControls || !pointer.isDown) {
+    if (!this.isTouchControls || !pointer.isDown || this.pauseState !== 'none') {
       return;
     }
 
@@ -345,7 +403,6 @@ export class GameScene extends Phaser.Scene {
 
   private wrapAroundSprite(sprite: Phaser.Physics.Arcade.Image): void {
     const m = GameScene.WRAP_MARGIN;
-
     if (sprite.x < -m) {
       sprite.x = GAME_WIDTH + m;
     } else if (sprite.x > GAME_WIDTH + m) {
@@ -358,13 +415,13 @@ export class GameScene extends Phaser.Scene {
       sprite.y = -m;
     }
   }
-
   private getControlsHint(): string {
-    return this.isTouchControls ? 'Touch left to move, right to aim/shoot' : 'WASD to move, LMB to shoot';
+    return this.isTouchControls
+      ? 'Touch left to move, right to aim/shoot. Use Pause button anytime.'
+      : 'WASD to move, LMB to shoot, P/Esc to pause.';
   }
-
   private tryShoot(targetX: number, targetY: number): void {
-    if (!this.gameplayStarted) {
+    if (!this.gameplayStarted || this.pauseState !== 'none') {
       return;
     }
 
@@ -382,8 +439,8 @@ export class GameScene extends Phaser.Scene {
       PLAYER_BULLET_SPEED,
       0x9ef7a2
     );
+    audioService.playShoot();
   }
-
   private createBullet(
     group: Phaser.Physics.Arcade.Group,
     x: number,
@@ -412,15 +469,17 @@ export class GameScene extends Phaser.Scene {
     bullet.setRotation(angle);
     bullet.setData('expiresAt', this.time.now + BULLET_LIFETIME_MS);
   }
-
   private spawnEnemy(): void {
-    if (this.ending || this.enemies.countActive(true) >= MAX_ENEMIES_ON_FIELD) {
+    if (this.ending || this.pauseState !== 'none') {
+      return;
+    }
+
+    if (this.enemies.countActive(true) >= this.waveConfig.maxEnemiesOnField) {
       return;
     }
 
     const side = Phaser.Math.Between(0, 3);
     const margin = 24;
-
     let x = 0;
     let y = 0;
 
@@ -444,10 +503,22 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    const pattern = pickEnemyPattern(Math.random(), this.waveConfig);
     enemy.enableBody(true, x, y, true, true);
     enemy.setTexture(textureKey);
     enemy.setDepth(3);
-    enemy.setData('nextShotAt', this.time.now + Phaser.Math.Between(ENEMY_FIRE_MIN_MS, ENEMY_FIRE_MAX_MS));
+    enemy.setData('pattern', pattern);
+    enemy.setData('nextShotAt', this.time.now + this.getEnemyShotDelay(pattern));
+    enemy.setData('dashAt', this.time.now + Phaser.Math.Between(850, 1800));
+    enemy.setData('dashUntil', 0);
+
+    if (pattern === 'strafer') {
+      enemy.setTint(0x93c5fd);
+    } else if (pattern === 'dasher') {
+      enemy.setTint(0xfcd34d);
+    } else {
+      enemy.clearTint();
+    }
   }
 
   private updateEnemyAI(): void {
@@ -462,9 +533,37 @@ export class GameScene extends Phaser.Scene {
         return true;
       }
 
-      const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, this.player.x, this.player.y);
-      this.physics.velocityFromRotation(angle, ENEMY_SPEED, enemyBody.velocity);
-      enemy.setRotation(angle + Math.PI / 2);
+      const pattern = (enemy.getData('pattern') as EnemyPattern | undefined) ?? 'chaser';
+      const angleToPlayer = Phaser.Math.Angle.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+      const baseSpeed = ENEMY_SPEED * this.waveConfig.enemySpeedMultiplier;
+
+      if (pattern === 'strafer') {
+        const toPlayer = new Phaser.Math.Vector2(this.player.x - enemy.x, this.player.y - enemy.y);
+        const distance = toPlayer.length();
+        if (distance > 0.001) {
+          toPlayer.normalize();
+        }
+        const sideways = new Phaser.Math.Vector2(-toPlayer.y, toPlayer.x);
+        const radialFactor = distance > 220 ? 0.75 : distance < 140 ? -0.6 : 0.12;
+        const vx = toPlayer.x * baseSpeed * radialFactor + sideways.x * baseSpeed * 0.95;
+        const vy = toPlayer.y * baseSpeed * radialFactor + sideways.y * baseSpeed * 0.95;
+        enemyBody.setVelocity(vx, vy);
+      } else if (pattern === 'dasher') {
+        const dashAt = Number(enemy.getData('dashAt') ?? 0);
+        const dashUntil = Number(enemy.getData('dashUntil') ?? 0);
+
+        if (this.time.now >= dashAt) {
+          this.physics.velocityFromRotation(angleToPlayer, baseSpeed * 2.4, enemyBody.velocity);
+          enemy.setData('dashUntil', this.time.now + 360);
+          enemy.setData('dashAt', this.time.now + Phaser.Math.Between(1300, 2300));
+        } else if (this.time.now >= dashUntil) {
+          this.physics.velocityFromRotation(angleToPlayer, baseSpeed * 0.6, enemyBody.velocity);
+        }
+      } else {
+        this.physics.velocityFromRotation(angleToPlayer, baseSpeed, enemyBody.velocity);
+      }
+
+      enemy.setRotation(angleToPlayer + Math.PI / 2);
       this.wrapAroundSprite(enemy);
 
       const nextShotAt = Number(enemy.getData('nextShotAt') ?? 0);
@@ -479,11 +578,27 @@ export class GameScene extends Phaser.Scene {
           0xffb4b4
         );
 
-        enemy.setData('nextShotAt', this.time.now + Phaser.Math.Between(ENEMY_FIRE_MIN_MS, ENEMY_FIRE_MAX_MS));
+        if (this.time.now - this.lastEnemyShotSfxAt >= 110) {
+          this.lastEnemyShotSfxAt = this.time.now;
+          audioService.playEnemyShoot();
+        }
+
+        enemy.setData('nextShotAt', this.time.now + this.getEnemyShotDelay(pattern));
       }
 
       return true;
     });
+  }
+
+  private getEnemyShotDelay(pattern: EnemyPattern): number {
+    const range = getEnemyFireDelayRange(this.waveConfig);
+    if (pattern === 'strafer') {
+      return Phaser.Math.Between(Math.round(range.minMs * 0.9), Math.round(range.maxMs * 0.9));
+    }
+    if (pattern === 'dasher') {
+      return Phaser.Math.Between(Math.round(range.minMs * 1.1), Math.round(range.maxMs * 1.1));
+    }
+    return Phaser.Math.Between(range.minMs, range.maxMs);
   }
 
   private cleanupExpiredBullets(): void {
@@ -493,7 +608,6 @@ export class GameScene extends Phaser.Scene {
 
   private cleanupGroupBullets(group: Phaser.Physics.Arcade.Group): void {
     const now = this.time.now;
-
     group.children.each((child) => {
       const bullet = child as Phaser.Physics.Arcade.Image;
       if (!bullet.active) {
@@ -508,7 +622,6 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
   }
-
   private onPlayerBulletHitsEnemy(
     firstObject: Phaser.GameObjects.GameObject,
     secondObject: Phaser.GameObjects.GameObject
@@ -529,15 +642,15 @@ export class GameScene extends Phaser.Scene {
 
     bullet.disableBody(true, true);
     enemy.disableBody(true, true);
-
     this.kills += 1;
     this.killsText.setText(`Kills: ${this.kills}/${KILLS_TO_WIN}`);
+    this.updateRunCreditsPreview();
+    this.recalculateWave();
 
     if (this.kills >= KILLS_TO_WIN) {
       void this.finishWin();
     }
   }
-
   private onEnemyBulletHitsPlayer(
     firstObject: Phaser.GameObjects.GameObject,
     secondObject: Phaser.GameObjects.GameObject
@@ -559,7 +672,6 @@ export class GameScene extends Phaser.Scene {
     bullet.disableBody(true, true);
     this.applyDamage(1);
   }
-
   private onEnemyTouchesPlayer(
     firstObject: Phaser.GameObjects.GameObject,
     secondObject: Phaser.GameObjects.GameObject
@@ -580,52 +692,364 @@ export class GameScene extends Phaser.Scene {
 
   private applyDamage(value: number): void {
     this.hp -= value;
-    this.hpText.setText(`HP: ${this.hp}`);
+    this.hpText.setText(`HP: ${Math.max(0, this.hp)}/${this.playerMaxHp}`);
     this.cameras.main.shake(100, 0.004);
+    audioService.playHit();
 
     if (this.hp <= 0) {
-      void this.finishLoss();
+      if (!this.reviveUsed && !this.reviveOfferActive) {
+        this.offerRevive();
+      } else {
+        void this.finishLoss();
+      }
     }
   }
-
-  private stopGameplayObjects(): void {
-    this.spawnTimer?.remove(false);
-    this.removePointerListeners();
-    this.gameplayStarted = false;
-
-    this.player.setVelocity(0, 0);
-
-    this.enemies.children.each((child) => {
-      const enemy = child as Phaser.Physics.Arcade.Image;
-      if (enemy.active) {
-        enemy.setVelocity(0, 0);
-      }
-
-      return true;
-    });
+  private offerRevive(): void {
+    this.reviveOfferActive = true;
+    this.pauseGameplay('revive');
+    this.statusText.setText('Critical damage! One revive is available.');
+    this.showReviveOverlay();
   }
 
-  private startGameplayLoop(): void {
-    this.spawnTimer = this.time.addEvent({
-      delay: ENEMY_SPAWN_DELAY_MS,
-      loop: true,
-      callback: () => this.spawnEnemy()
-    });
+  private showReviveOverlay(): void {
+    const shadow = this.add.rectangle(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      0x000000,
+      0.72
+    );
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 320, 0x111827, 0.98);
+    panel.setStrokeStyle(2, 0x93c5fd, 0.85);
 
-    this.startedAt = this.time.now;
-    this.gameplayStarted = true;
-    this.statusText.setText(this.getControlsHint());
-    yandexService.markGameplayStart();
+    const title = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 110, 'Revive Available', {
+        fontFamily: 'Arial',
+        fontSize: '40px',
+        color: '#f8fafc'
+      })
+      .setOrigin(0.5);
+
+    const note = this.add
+      .text(
+        GAME_WIDTH / 2,
+        GAME_HEIGHT / 2 - 50,
+        'Watch a rewarded ad to continue this run.\nOnly one revive can be used per run.',
+        {
+          fontFamily: 'Arial',
+          fontSize: '22px',
+          color: '#e2e8f0',
+          align: 'center',
+          lineSpacing: 8
+        }
+      )
+      .setOrigin(0.5);
+
+    this.reviveStatusText = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 12, '', {
+        fontFamily: 'Arial',
+        fontSize: '21px',
+        color: '#fde68a'
+      })
+      .setOrigin(0.5);
+
+    const reviveButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + 80,
+      'Watch Ad and Revive',
+      () => {
+        void this.tryRevive(reviveButton);
+      },
+      { width: 420, fontSize: 21 }
+    );
+
+    const giveUpButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + 145,
+      'Give Up',
+      () => {
+        audioService.playUiClick();
+        this.hideReviveOverlay();
+        void this.finishLoss();
+      },
+      { width: 260, fontSize: 20, normalColor: 0x5b1d2a, hoverColor: 0x7f1d1d }
+    );
+
+    this.reviveOverlay = this.add.container(0, 0, [
+      shadow,
+      panel,
+      title,
+      note,
+      this.reviveStatusText,
+      reviveButton,
+      giveUpButton
+    ]);
+    this.reviveOverlay.setDepth(40);
   }
 
-  private async startGameplayAfterRestartAd(): Promise<void> {
-    this.statusText.setText('Restarted. Showing ad...');
-    await yandexService.showInterstitial();
+  private async tryRevive(button: TextButton): Promise<void> {
+    button.setEnabled(false);
+    this.reviveStatusText?.setText('Loading rewarded ad...');
+    await audioService.unlock();
+    const rewarded = await yandexService.showRewarded();
 
     if (!this.scene.isActive() || this.ending) {
       return;
     }
 
+    if (!rewarded) {
+      this.reviveStatusText?.setText('Reward was not granted. Ending run...');
+      await this.delay(400);
+      this.hideReviveOverlay();
+      void this.finishLoss();
+      return;
+    }
+
+    this.reviveUsed = true;
+    this.reviveOfferActive = false;
+    this.hp = Math.max(2, Math.ceil(this.playerMaxHp * 0.5));
+    this.hpText.setText(`HP: ${this.hp}/${this.playerMaxHp}`);
+    this.clearGroup(this.enemyBullets);
+    this.clearGroup(this.enemies);
+    this.hideReviveOverlay();
+    this.resumeGameplay();
+    this.statusText.setText('Revive used. Back in action.');
+    audioService.playRevive();
+    yandexService.trackEvent('revive_used', {
+      kills: this.kills,
+      wave: this.wave
+    });
+  }
+
+  private clearGroup(group: Phaser.Physics.Arcade.Group): void {
+    group.children.each((child) => {
+      const item = child as Phaser.Physics.Arcade.Image;
+      if (item.active) {
+        item.disableBody(true, true);
+      }
+      return true;
+    });
+  }
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+  private handlePauseShortcuts(): void {
+    const pressedPause =
+      Boolean(this.keyPause && Phaser.Input.Keyboard.JustDown(this.keyPause)) ||
+      Boolean(this.keyEscape && Phaser.Input.Keyboard.JustDown(this.keyEscape));
+
+    if (!pressedPause) {
+      return;
+    }
+
+    this.togglePause();
+  }
+
+  private togglePause(): void {
+    if (this.ending || !this.gameplayStarted || this.reviveOfferActive) {
+      return;
+    }
+
+    if (this.pauseState === 'manual') {
+      this.resumeGameplay();
+      return;
+    }
+
+    if (this.pauseState === 'none') {
+      this.pauseGameplay('manual');
+      this.statusText.setText('Paused');
+    }
+  }
+
+  private pauseGameplay(nextState: Exclude<PauseState, 'none'>): void {
+    if (this.pauseState === nextState) {
+      return;
+    }
+
+    this.pauseState = nextState;
+    this.physics.world.pause();
+    if (this.spawnTimer) {
+      this.spawnTimer.paused = true;
+    }
+    yandexService.markGameplayStop();
+
+    if (nextState === 'manual') {
+      this.showPauseOverlay();
+    }
+  }
+
+  private resumeGameplay(): void {
+    if (this.pauseState === 'none' || this.ending) {
+      return;
+    }
+
+    const wasManual = this.pauseState === 'manual';
+    this.pauseState = 'none';
+    this.physics.world.resume();
+    if (this.spawnTimer) {
+      this.spawnTimer.paused = false;
+    }
+    yandexService.markGameplayStart();
+
+    if (wasManual) {
+      this.hidePauseOverlay();
+      this.statusText.setText(this.getControlsHint());
+    }
+  }
+
+  private showPauseOverlay(): void {
+    if (this.pauseOverlay) {
+      this.pauseOverlay.setVisible(true);
+      return;
+    }
+
+    const shadow = this.add.rectangle(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      0x000000,
+      0.62
+    );
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 460, 250, 0x111827, 0.97);
+    panel.setStrokeStyle(2, 0x93c5fd, 0.8);
+
+    const title = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 72, 'Paused', {
+        fontFamily: 'Arial',
+        fontSize: '46px',
+        color: '#f8fafc'
+      })
+      .setOrigin(0.5);
+
+    const resumeButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + 2,
+      'Resume',
+      () => {
+        audioService.playUiClick();
+        this.resumeGameplay();
+      },
+      { width: 240, fontSize: 21 }
+    );
+
+    const mainMenuButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + 78,
+      'Main Menu',
+      () => {
+        audioService.playUiClick();
+        this.ending = true;
+        this.stopGameplayObjects();
+        this.scene.start('MainMenuScene');
+      },
+      { width: 240, fontSize: 21 }
+    );
+
+    this.pauseOverlay = this.add.container(0, 0, [shadow, panel, title, resumeButton, mainMenuButton]);
+    this.pauseOverlay.setDepth(35);
+  }
+
+  private hidePauseOverlay(): void {
+    this.pauseOverlay?.setVisible(false);
+  }
+
+  private hideReviveOverlay(): void {
+    this.reviveOverlay?.destroy();
+    this.reviveOverlay = undefined;
+    this.reviveStatusText = undefined;
+    this.reviveOfferActive = false;
+  }
+
+  private stopGameplayObjects(): void {
+    this.spawnTimer?.remove(false);
+    this.spawnTimer = undefined;
+    this.removePointerListeners();
+    this.gameplayStarted = false;
+    this.pauseState = 'none';
+    this.physics.world.resume();
+    this.hidePauseOverlay();
+    this.hideReviveOverlay();
+
+    this.player.setVelocity(0, 0);
+    this.enemies.children.each((child) => {
+      const enemy = child as Phaser.Physics.Arcade.Image;
+      if (enemy.active) {
+        enemy.setVelocity(0, 0);
+      }
+      return true;
+    });
+  }
+
+  private startGameplayLoop(): void {
+    this.waveConfig = getWaveConfig(this.kills);
+    this.wave = this.waveConfig.wave;
+    this.waveText.setText(`Wave: ${this.wave}`);
+    this.recreateSpawnTimer();
+
+    this.startedAt = this.time.now;
+    this.gameplayStarted = true;
+    this.statusText.setText(this.getControlsHint());
+    this.updateRunCreditsPreview();
+
+    yandexService.markGameplayStart();
+    yandexService.trackEvent('start_run', {
+      hp_max: this.playerMaxHp,
+      hp_upgrade_level: progressStore.data.hpUpgradeLevel,
+      controls: this.isTouchControls ? 'touch' : 'keyboard'
+    });
+  }
+
+  private recreateSpawnTimer(): void {
+    const wasPaused = this.pauseState !== 'none';
+    this.spawnTimer?.remove(false);
+    this.spawnTimer = this.time.addEvent({
+      delay: this.waveConfig.spawnDelayMs,
+      loop: true,
+      callback: () => this.spawnEnemy()
+    });
+    this.spawnTimer.paused = wasPaused;
+  }
+
+  private updateRunCreditsPreview(): void {
+    this.creditsText.setText(`Run Credits: ${getRunCreditsReward(this.kills, false)}`);
+  }
+
+  private recalculateWave(): void {
+    const previousWave = this.wave;
+    const nextConfig = getWaveConfig(this.kills);
+    const waveChanged = nextConfig.wave !== previousWave;
+    const spawnDelayChanged = nextConfig.spawnDelayMs !== this.waveConfig.spawnDelayMs;
+
+    this.waveConfig = nextConfig;
+    this.wave = nextConfig.wave;
+    this.waveText.setText(`Wave: ${this.wave}`);
+
+    if (spawnDelayChanged && this.gameplayStarted) {
+      this.recreateSpawnTimer();
+    }
+
+    if (waveChanged) {
+      this.statusText.setText(`Wave ${this.wave} engaged!`);
+      this.time.delayedCall(900, () => {
+        if (!this.ending && this.pauseState === 'none') {
+          this.statusText.setText(this.getControlsHint());
+        }
+      });
+    }
+  }
+
+  private async startGameplayAfterRestartAd(): Promise<void> {
+    this.statusText.setText('Restarting. Showing ad...');
+    await yandexService.showInterstitial();
+    if (!this.scene.isActive() || this.ending) {
+      return;
+    }
     this.startGameplayLoop();
   }
 
@@ -639,15 +1063,25 @@ export class GameScene extends Phaser.Scene {
     this.stopGameplayObjects();
     yandexService.markGameplayStop();
 
-    progressStore.recordLoss(this.kills);
+    const creditsEarned = progressStore.recordLoss(this.kills);
     await progressStore.save();
 
+    yandexService.trackEvent('loss', {
+      kills: this.kills,
+      wave: this.wave,
+      credits_earned: creditsEarned,
+      revive_used: this.reviveUsed
+    });
+
+    await ensureSceneRegistered(this, 'GameOverScene', async () => (await import('./GameOverScene')).GameOverScene);
     await yandexService.showInterstitial();
 
     const data: GameOverSceneData = {
-      kills: this.kills
+      kills: this.kills,
+      creditsEarned,
+      waveReached: this.wave,
+      reviveUsed: this.reviveUsed
     };
-
     this.scene.start('GameOverScene', data);
   }
 
@@ -663,17 +1097,30 @@ export class GameScene extends Phaser.Scene {
 
     const elapsedMs = Math.max(1, this.time.now - this.startedAt);
     const score = Math.max(1, 120000 - elapsedMs);
-
-    progressStore.recordWin(score, this.kills);
+    const creditsEarned = progressStore.recordWin(score, this.kills);
     await progressStore.save();
     await yandexService.submitScore(score);
+    audioService.playWin();
+
+    yandexService.trackEvent('win', {
+      kills: this.kills,
+      wave: this.wave,
+      score,
+      elapsed_ms: elapsedMs,
+      credits_earned: creditsEarned,
+      revive_used: this.reviveUsed
+    });
+
+    await ensureSceneRegistered(this, 'WinScene', async () => (await import('./WinScene')).WinScene);
 
     const data: WinSceneData = {
       kills: this.kills,
       score,
-      elapsedMs
+      elapsedMs,
+      creditsEarned,
+      waveReached: this.wave,
+      reviveUsed: this.reviveUsed
     };
-
     this.scene.start('WinScene', data);
   }
 }

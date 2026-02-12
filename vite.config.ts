@@ -13,6 +13,33 @@ export default defineConfig({
     }
   },
   build: {
-    target: 'es2020'
+    target: 'es2020',
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/phaser')) {
+            return 'vendor-phaser';
+          }
+
+          if (
+            id.includes('/src/game/scenes/GameScene') ||
+            id.includes('/src/game/scenes/WinScene') ||
+            id.includes('/src/game/scenes/GameOverScene')
+          ) {
+            return 'gameplay-scenes';
+          }
+
+          if (
+            id.includes('/src/game/services/YandexService') ||
+            id.includes('/src/game/services/AudioService')
+          ) {
+            return 'platform-services';
+          }
+
+          return undefined;
+        }
+      }
+    }
   }
 });
