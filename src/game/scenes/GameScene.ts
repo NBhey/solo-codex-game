@@ -23,6 +23,7 @@ import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
 import { createTextButton } from '../ui/createTextButton';
+import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
 import { ensureSceneRegistered } from './sceneLoader';
 
@@ -97,6 +98,10 @@ export class GameScene extends Phaser.Scene {
   private reviveUsed = false;
   private reviveOfferActive = false;
   private pauseButton?: TextButton;
+  private touchMoveHintRect?: Phaser.GameObjects.Rectangle;
+  private touchAimHintRect?: Phaser.GameObjects.Rectangle;
+  private touchMoveHintText?: Phaser.GameObjects.Text;
+  private touchAimHintText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('GameScene');
@@ -128,7 +133,10 @@ export class GameScene extends Phaser.Scene {
     this.setupCollisions();
     this.createHud();
     this.bindInput();
+    this.createTouchHints();
     audioService.startMusic();
+
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
 
     if (this.showInterstitialAfterRestart) {
       void this.startGameplayAfterRestartAd();
@@ -143,6 +151,12 @@ export class GameScene extends Phaser.Scene {
       this.spawnTimer?.remove(false);
       this.pauseOverlay?.destroy();
       this.reviveOverlay?.destroy();
+      this.pauseButton?.destroy();
+      this.touchMoveHintRect?.destroy();
+      this.touchAimHintRect?.destroy();
+      this.touchMoveHintText?.destroy();
+      this.touchAimHintText?.destroy();
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     });
   }
 
@@ -267,38 +281,142 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createHud(): void {
-    this.killsText = this.add.text(14, 12, `Kills: ${this.kills}/${KILLS_TO_WIN}`, {
-      fontFamily: 'Arial',
-      fontSize: '24px',
-      color: '#ecfeff'
-    });
-    this.hpText = this.add.text(14, 42, `HP: ${this.hp}/${this.playerMaxHp}`, {
-      fontFamily: 'Arial',
-      fontSize: '24px',
-      color: '#dcfce7'
-    });
-    this.waveText = this.add.text(14, 72, `Wave: ${this.wave}`, {
-      fontFamily: 'Arial',
-      fontSize: '22px',
-      color: '#bfdbfe'
-    });
-    this.creditsText = this.add.text(14, 102, 'Run Credits: 0', {
+    this.killsText = this.add.text(0, 0, `Kills: ${this.kills}/${KILLS_TO_WIN}`, {
       fontFamily: 'Arial',
       fontSize: '20px',
+      color: '#ecfeff'
+    });
+    this.hpText = this.add.text(0, 0, `HP: ${this.hp}/${this.playerMaxHp}`, {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: '#dcfce7'
+    });
+    this.waveText = this.add.text(0, 0, `Wave: ${this.wave}`, {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: '#bfdbfe'
+    });
+    this.creditsText = this.add.text(0, 0, 'Run Credits: 0', {
+      fontFamily: 'Arial',
+      fontSize: '17px',
       color: '#fef3c7'
     });
     this.statusText = this.add
-      .text(GAME_WIDTH / 2, 14, this.getControlsHint(), {
+      .text(0, 0, this.getControlsHint(), {
         fontFamily: 'Arial',
-        fontSize: '20px',
+        fontSize: '16px',
         color: '#dbeafe'
       })
       .setOrigin(0.5, 0);
-    this.pauseButton = createTextButton(this, GAME_WIDTH - 82, 30, 'Pause', () => {
-      audioService.playUiClick();
-      this.togglePause();
-    }, { width: 130, height: 42, fontSize: 18 });
+
+    this.applyHudLayout();
+  }
+
+  private applyHudLayout(): void {
+    const ui = getUiMetrics(this);
+    const margin = ui.margin;
+
+    this.killsText.setPosition(margin, margin * 0.7);
+    this.killsText.setFontSize(px(ui.hudFont));
+
+    this.hpText.setPosition(margin, margin * 0.7 + ui.hudFont + 4);
+    this.hpText.setFontSize(px(ui.hudFont));
+
+    this.waveText.setPosition(margin, margin * 0.7 + ui.hudFont * 2 + 8);
+    this.waveText.setFontSize(px(ui.hudCompactFont));
+
+    this.creditsText.setPosition(margin, margin * 0.7 + ui.hudFont * 2 + ui.hudCompactFont + 12);
+    this.creditsText.setFontSize(px(ui.hudCompactFont));
+
+    this.statusText.setPosition(GAME_WIDTH / 2, margin * 0.7);
+    this.statusText.setFontSize(px(ui.hudCompactFont));
+
+    this.pauseButton?.destroy();
+    const pauseButtonWidth = ui.buttonCompactWidth;
+    const pauseButtonHeight = Math.max(36, ui.buttonHeight - 8);
+    this.pauseButton = createTextButton(
+      this,
+      GAME_WIDTH - pauseButtonWidth * 0.5 - ui.margin,
+      margin + pauseButtonHeight * 0.5,
+      'Pause',
+      () => {
+        audioService.playUiClick();
+        this.togglePause();
+      },
+      {
+        width: pauseButtonWidth,
+        height: pauseButtonHeight,
+        fontSize: Math.max(14, ui.buttonFont - 2)
+      }
+    );
     this.pauseButton.setDepth(15);
+  }
+
+  private createTouchHints(): void {
+    if (!this.isTouchControls) {
+      return;
+    }
+
+    this.touchMoveHintRect = this.add.rectangle(0, 0, 10, 10, 0x1e3a5f, 0.16).setOrigin(0, 1).setDepth(1);
+    this.touchAimHintRect = this.add.rectangle(0, 0, 10, 10, 0x6b2d45, 0.16).setOrigin(0, 1).setDepth(1);
+
+    this.touchMoveHintText = this.add
+      .text(0, 0, 'Move Zone', {
+        fontFamily: 'Arial',
+        fontSize: '14px',
+        color: '#bfdbfe'
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(2);
+
+    this.touchAimHintText = this.add
+      .text(0, 0, 'Aim + Shoot Zone', {
+        fontFamily: 'Arial',
+        fontSize: '14px',
+        color: '#fecdd3'
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(2);
+
+    this.layoutTouchHints();
+  }
+
+  private layoutTouchHints(): void {
+    if (!this.isTouchControls || !this.touchMoveHintRect || !this.touchAimHintRect) {
+      return;
+    }
+
+    const ui = getUiMetrics(this);
+    const zoneHeight = Math.round(Math.max(82, Math.min(122, 92 * ui.uiScale)));
+    const leftWidth = GAME_WIDTH * 0.5;
+
+    this.touchMoveHintRect.setPosition(0, GAME_HEIGHT).setSize(leftWidth, zoneHeight);
+    this.touchAimHintRect.setPosition(leftWidth, GAME_HEIGHT).setSize(leftWidth, zoneHeight);
+    this.touchMoveHintText?.setPosition(leftWidth * 0.5, GAME_HEIGHT - zoneHeight * 0.5);
+    this.touchMoveHintText?.setFontSize(px(Math.max(13, ui.smallFont - 1)));
+    this.touchAimHintText?.setPosition(leftWidth + leftWidth * 0.5, GAME_HEIGHT - zoneHeight * 0.5);
+    this.touchAimHintText?.setFontSize(px(Math.max(13, ui.smallFont - 1)));
+  }
+
+  private handleResize(): void {
+    this.applyHudLayout();
+    this.layoutTouchHints();
+
+    if (this.pauseState === 'manual' && this.pauseOverlay) {
+      this.pauseOverlay.destroy();
+      this.pauseOverlay = undefined;
+      this.showPauseOverlay();
+    }
+
+    if (this.reviveOfferActive && this.reviveOverlay) {
+      const reviveMessage = this.reviveStatusText?.text ?? '';
+      this.reviveOverlay.destroy();
+      this.reviveOverlay = undefined;
+      this.showReviveOverlay();
+      if (reviveMessage) {
+        this.reviveStatusText?.setText(reviveMessage);
+      }
+    }
   }
 
   private updatePlayerMovement(): void {
@@ -417,7 +535,7 @@ export class GameScene extends Phaser.Scene {
   }
   private getControlsHint(): string {
     return this.isTouchControls
-      ? 'Touch left to move, right to aim/shoot. Use Pause button anytime.'
+      ? 'Left zone: move. Right zone: aim/shoot. Use Pause anytime.'
       : 'WASD to move, LMB to shoot, P/Esc to pause.';
   }
   private tryShoot(targetX: number, targetY: number): void {
@@ -712,6 +830,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showReviveOverlay(): void {
+    const ui = getUiMetrics(this);
+    const panelWidth = ui.modalLargeWidth;
+    const panelHeight = Math.round(panelWidth * 0.5);
+
     const shadow = this.add.rectangle(
       GAME_WIDTH / 2,
       GAME_HEIGHT / 2,
@@ -720,13 +842,13 @@ export class GameScene extends Phaser.Scene {
       0x000000,
       0.72
     );
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 320, 0x111827, 0.98);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.98);
     panel.setStrokeStyle(2, 0x93c5fd, 0.85);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 110, 'Revive Available', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.34, 'Revive Available', {
         fontFamily: 'Arial',
-        fontSize: '40px',
+        fontSize: px(ui.headingFont),
         color: '#f8fafc'
       })
       .setOrigin(0.5);
@@ -734,22 +856,22 @@ export class GameScene extends Phaser.Scene {
     const note = this.add
       .text(
         GAME_WIDTH / 2,
-        GAME_HEIGHT / 2 - 50,
+        GAME_HEIGHT / 2 - panelHeight * 0.14,
         'Watch a rewarded ad to continue this run.\nOnly one revive can be used per run.',
         {
           fontFamily: 'Arial',
-          fontSize: '22px',
+          fontSize: px(ui.bodyFont),
           color: '#e2e8f0',
           align: 'center',
-          lineSpacing: 8
+          lineSpacing: ui.lineSpacing
         }
       )
       .setOrigin(0.5);
 
     this.reviveStatusText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 12, '', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.08, '', {
         fontFamily: 'Arial',
-        fontSize: '21px',
+        fontSize: px(ui.smallFont),
         color: '#fde68a'
       })
       .setOrigin(0.5);
@@ -757,25 +879,31 @@ export class GameScene extends Phaser.Scene {
     const reviveButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + 80,
+      GAME_HEIGHT / 2 + panelHeight * 0.26,
       'Watch Ad and Revive',
       () => {
         void this.tryRevive(reviveButton);
       },
-      { width: 420, fontSize: 21 }
+      { width: Math.min(panelWidth - 80, ui.modalWidth), height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
 
     const giveUpButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + 145,
+      GAME_HEIGHT / 2 + panelHeight * 0.42,
       'Give Up',
       () => {
         audioService.playUiClick();
         this.hideReviveOverlay();
         void this.finishLoss();
       },
-      { width: 260, fontSize: 20, normalColor: 0x5b1d2a, hoverColor: 0x7f1d1d }
+      {
+        width: Math.min(panelWidth - 160, ui.buttonWidth),
+        height: ui.buttonHeight,
+        fontSize: ui.buttonFont,
+        normalColor: 0x5b1d2a,
+        hoverColor: 0x7f1d1d
+      }
     );
 
     this.reviveOverlay = this.add.container(0, 0, [
@@ -906,6 +1034,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    const ui = getUiMetrics(this);
+    const panelWidth = ui.modalWidth;
+    const panelHeight = Math.round(panelWidth * 0.52);
+
     const shadow = this.add.rectangle(
       GAME_WIDTH / 2,
       GAME_HEIGHT / 2,
@@ -914,13 +1046,13 @@ export class GameScene extends Phaser.Scene {
       0x000000,
       0.62
     );
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 460, 250, 0x111827, 0.97);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.97);
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 72, 'Paused', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.28, 'Paused', {
         fontFamily: 'Arial',
-        fontSize: '46px',
+        fontSize: px(ui.sceneTitleFont),
         color: '#f8fafc'
       })
       .setOrigin(0.5);
@@ -928,19 +1060,19 @@ export class GameScene extends Phaser.Scene {
     const resumeButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + 2,
+      GAME_HEIGHT / 2 + panelHeight * 0.02,
       'Resume',
       () => {
         audioService.playUiClick();
         this.resumeGameplay();
       },
-      { width: 240, fontSize: 21 }
+      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
 
     const mainMenuButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + 78,
+      GAME_HEIGHT / 2 + panelHeight * 0.28,
       'Main Menu',
       () => {
         audioService.playUiClick();
@@ -948,7 +1080,7 @@ export class GameScene extends Phaser.Scene {
         this.stopGameplayObjects();
         this.scene.start('MainMenuScene');
       },
-      { width: 240, fontSize: 21 }
+      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
 
     this.pauseOverlay = this.add.container(0, 0, [shadow, panel, title, resumeButton, mainMenuButton]);

@@ -23,6 +23,12 @@ npm run dev
 
 Open URL from Vite output (usually `http://localhost:5173`).
 
+## Mobile Orientation Requirement
+
+- Phone portrait mode is blocked by an overlay: `Поверните устройство горизонтально`.
+- The game resumes automatically after rotating to landscape.
+- During gameplay on touch devices, left half is movement zone and right half is aim/shoot zone.
+
 ### 3) Type-check
 
 ```bash

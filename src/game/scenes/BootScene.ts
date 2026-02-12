@@ -3,6 +3,7 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
 import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
+import { getUiMetrics, px } from '../ui/uiMetrics';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -10,11 +11,12 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    const ui = getUiMetrics(this);
     this.cameras.main.setBackgroundColor(0x0b1020);
     this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 16, 'Booting...', {
         fontFamily: 'Arial',
-        fontSize: '34px',
+        fontSize: px(ui.headingFont),
         color: '#e2e8f0'
       })
       .setOrigin(0.5);

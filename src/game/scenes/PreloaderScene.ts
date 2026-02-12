@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
 import { yandexService } from '../services/YandexService';
+import { getUiMetrics, px } from '../ui/uiMetrics';
 
 interface ShipCropDefinition {
   key: string;
@@ -40,11 +41,12 @@ export class PreloaderScene extends Phaser.Scene {
   }
 
   create(): void {
+    const ui = getUiMetrics(this);
     this.cameras.main.setBackgroundColor(0x0f172a);
     this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Preloading assets...', {
         fontFamily: 'Arial',
-        fontSize: '28px',
+        fontSize: px(ui.headingFont),
         color: '#cbd5e1'
       })
       .setOrigin(0.5);

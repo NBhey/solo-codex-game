@@ -22,13 +22,13 @@ export function createTextButton(
   onClick: () => void,
   options: TextButtonOptions = {}
 ): TextButton {
-  const width = options.width ?? 320;
-  const height = options.height ?? 56;
+  const width = options.width ?? 250;
+  const height = options.height ?? 46;
   const normalColor = options.normalColor ?? 0x243d5a;
   const hoverColor = options.hoverColor ?? 0x2f5c88;
   const disabledColor = options.disabledColor ?? 0x4b5563;
   const textColor = options.textColor ?? '#f8fafc';
-  const fontSize = options.fontSize ?? 24;
+  const fontSize = options.fontSize ?? 20;
 
   const container = scene.add.container(x, y) as TextButton;
   const bg = scene.add

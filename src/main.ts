@@ -3,6 +3,7 @@ import { GAME_HEIGHT, GAME_WIDTH } from './game/config/gameConfig';
 import { BootScene } from './game/scenes/BootScene';
 import { PreloaderScene } from './game/scenes/PreloaderScene';
 import { MainMenuScene } from './game/scenes/MainMenuScene';
+import { OrientationGuard } from './game/ui/OrientationGuard';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -19,10 +20,16 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   scale: {
     mode: Phaser.Scale.FIT,
+    expandParent: true,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: GAME_WIDTH,
     height: GAME_HEIGHT
   }
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+const orientationGuard = new OrientationGuard(game);
+
+window.addEventListener('beforeunload', () => {
+  orientationGuard.destroy();
+});

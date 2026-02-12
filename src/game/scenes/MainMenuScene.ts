@@ -4,8 +4,9 @@ import { MAX_HP_UPGRADE_CAP } from '../logic/metaProgression';
 import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { progressStore } from '../state/ProgressStore';
-import { ensureSceneRegistered } from './sceneLoader';
 import { createTextButton } from '../ui/createTextButton';
+import { getUiMetrics, px } from '../ui/uiMetrics';
+import { ensureSceneRegistered } from './sceneLoader';
 
 export class MainMenuScene extends Phaser.Scene {
   private statsText?: Phaser.GameObjects.Text;
@@ -16,37 +17,53 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    const ui = getUiMetrics(this);
     this.drawBackground();
     audioService.startMusic();
 
     this.add
       .text(GAME_WIDTH / 2, 88, 'Triangle Arena', {
         fontFamily: 'Arial',
-        fontSize: '56px',
+        fontSize: px(ui.heroTitleFont),
         color: '#f8fafc'
       })
       .setOrigin(0.5);
 
-    this.statsText = this.add.text(22, 18, this.buildStatsText(), {
+    this.statsText = this.add.text(ui.margin + 8, ui.margin + 4, this.buildStatsText(), {
       fontFamily: 'Arial',
-      fontSize: '20px',
+      fontSize: px(ui.bodyFont),
       color: '#cbd5e1',
-      lineSpacing: 6
+      lineSpacing: ui.lineSpacing
     });
 
-    createTextButton(this, GAME_WIDTH / 2, 250, 'Start', () => {
+    const buttonYStart = GAME_HEIGHT * 0.48;
+    const step = ui.buttonHeight + ui.margin + 6;
+
+    createTextButton(this, GAME_WIDTH / 2, buttonYStart, 'Start', () => {
       void this.startGame();
-    });
+    }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
 
-    createTextButton(this, GAME_WIDTH / 2, 325, 'Leaderboard', () => {
+    createTextButton(this, GAME_WIDTH / 2, buttonYStart + step, 'Leaderboard', () => {
       void this.showLeaderboard();
-    });
+    }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
 
-    createTextButton(this, GAME_WIDTH / 2, 400, 'Settings', () => {
+    createTextButton(this, GAME_WIDTH / 2, buttonYStart + step * 2, 'Settings', () => {
       this.showSettings();
-    });
+    }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.clearModal());
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+      this.clearModal();
+    });
+  }
+
+  private handleResize(): void {
+    if (!this.scene.isActive()) {
+      return;
+    }
+
+    this.scene.restart();
   }
 
   private drawBackground(): void {
@@ -82,6 +99,7 @@ export class MainMenuScene extends Phaser.Scene {
     if (!this.statsText) {
       return;
     }
+
     this.statsText.setText(this.buildStatsText());
   }
 
@@ -96,33 +114,41 @@ export class MainMenuScene extends Phaser.Scene {
   private async showLeaderboard(): Promise<void> {
     audioService.playUiClick();
     this.clearModal();
+    const ui = getUiMetrics(this);
+    const panelWidth = ui.modalWidth;
+    const panelHeight = Math.round(panelWidth * 0.58);
 
     const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
     shadow.setInteractive({ useHandCursor: true });
 
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 360, 0x111827, 0.98);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.98);
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 135, 'Leaderboard', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.38, 'Leaderboard', {
         fontFamily: 'Arial',
-        fontSize: '34px',
+        fontSize: px(ui.headingFont),
         color: '#f8fafc'
       })
       .setOrigin(0.5);
 
     const rowsText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, 'Loading leaderboard...', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.2, 'Loading leaderboard...', {
         fontFamily: 'Arial',
-        fontSize: '24px',
+        fontSize: px(ui.bodyFont),
         color: '#e2e8f0',
         align: 'center',
-        lineSpacing: 8
+        lineSpacing: ui.lineSpacing
       })
       .setOrigin(0.5, 0);
 
-    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 130, 'Close', () => {
+    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.36, 'Close', () => {
+      audioService.playUiClick();
       this.clearModal();
+    }, {
+      width: Math.min(ui.buttonWidth, panelWidth - 120),
+      height: ui.buttonHeight,
+      fontSize: ui.buttonFont
     });
 
     this.modalObjects.push(shadow, panel, title, rowsText, closeButton);
@@ -143,63 +169,84 @@ export class MainMenuScene extends Phaser.Scene {
   private showSettings(): void {
     audioService.playUiClick();
     this.clearModal();
+    const ui = getUiMetrics(this);
+    const panelWidth = ui.modalLargeWidth;
+    const panelHeight = Math.round(panelWidth * 0.66);
 
     const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
     shadow.setInteractive({ useHandCursor: true });
 
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 640, 420, 0x111827, 0.98);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.98);
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 118, 'Settings', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.38, 'Settings', {
         fontFamily: 'Arial',
-        fontSize: '34px',
+        fontSize: px(ui.headingFont),
         color: '#f8fafc'
       })
       .setOrigin(0.5);
 
     const statusText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 46, this.soundLabel(), {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.2, this.soundLabel(), {
         fontFamily: 'Arial',
-        fontSize: '26px',
+        fontSize: px(ui.bodyFont),
         color: '#e2e8f0'
       })
       .setOrigin(0.5);
 
     const upgradeText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 32, this.hpUpgradeLabel(), {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.04, this.hpUpgradeLabel(), {
         fontFamily: 'Arial',
-        fontSize: '22px',
+        fontSize: px(ui.smallFont),
         color: '#bfdbfe',
         align: 'center',
-        lineSpacing: 6
+        lineSpacing: ui.lineSpacing
       })
       .setOrigin(0.5);
 
-    const toggleSoundButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 2, 'Toggle Sound', () => {
-      const enabled = progressStore.toggleSound();
-      audioService.setEnabled(enabled);
-      audioService.playUiClick();
-      void progressStore.save();
-      statusText.setText(this.soundLabel());
-      this.refreshStats();
-    });
+    const toggleSoundButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + panelHeight * 0.16,
+      'Toggle Sound',
+      () => {
+        const enabled = progressStore.toggleSound();
+        audioService.setEnabled(enabled);
+        audioService.playUiClick();
+        void progressStore.save();
+        statusText.setText(this.soundLabel());
+        this.refreshStats();
+      },
+      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
+    );
 
-    const upgradeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 104, 'Upgrade Hull', () => {
-      audioService.playUiClick();
-      if (!progressStore.purchaseHpUpgrade()) {
-        upgradeText.setText(this.hpUpgradeLabel('Not enough credits or upgrade is already maxed.'));
-        return;
-      }
+    const upgradeButton = createTextButton(
+      this,
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + panelHeight * 0.34,
+      'Upgrade Hull',
+      () => {
+        audioService.playUiClick();
+        if (!progressStore.purchaseHpUpgrade()) {
+          upgradeText.setText(this.hpUpgradeLabel('Not enough credits or upgrade is already maxed.'));
+          return;
+        }
 
-      void progressStore.save();
-      upgradeText.setText(this.hpUpgradeLabel('Upgrade purchased. +1 max HP will apply next run.'));
-      this.refreshStats();
-    });
+        void progressStore.save();
+        upgradeText.setText(this.hpUpgradeLabel('Upgrade purchased. +1 max HP will apply next run.'));
+        this.refreshStats();
+      },
+      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
+    );
 
-    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 188, 'Close', () => {
+    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.5, 'Close', () => {
       audioService.playUiClick();
       this.clearModal();
+    }, {
+      width: Math.min(ui.buttonWidth, panelWidth - 120),
+      height: ui.buttonHeight,
+      fontSize: ui.buttonFont
     });
 
     this.modalObjects.push(
