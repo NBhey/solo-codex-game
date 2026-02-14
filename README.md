@@ -131,6 +131,6 @@ Save/load pipeline:
 - `BootScene`: SDK init + progress load
 - `PreloaderScene`: sprite-sheet crop + geometry fallback generation
 - `MainMenuScene`: Start / Leaderboard / Settings
-- `GameScene`: gameplay loop (desktop: WASD + LMB, mobile: touch left to move / touch right to aim+shoot, wrap-around flight without hard map borders, win at 10 kills)
+- `GameScene`: gameplay loop (desktop: WASD + LMB, mobile: touch left to move / touch right to aim+shoot, infinite flight area with follow camera, win at 24 kills across 6 waves)
 - `GameOverScene`: loss + instant restart button
 - `WinScene`: win result + leaderboard preview

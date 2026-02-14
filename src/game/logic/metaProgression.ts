@@ -1,4 +1,4 @@
-export const MAX_HP_UPGRADE_CAP = 5;
+export const MAX_HP_UPGRADE_CAP = 80;
 export const HP_UPGRADE_BASE_COST = 35;
 export const HP_UPGRADE_STEP_COST = 20;
 export const CREDITS_PER_KILL = 4;

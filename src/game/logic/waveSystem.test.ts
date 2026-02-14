@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LEVEL_COUNT } from '../config/gameConfig';
 import { getEnemyFireDelayRange, getWaveConfig, getWaveForKills, pickEnemyPattern } from './waveSystem';
 
 describe('waveSystem', () => {
@@ -7,6 +8,7 @@ describe('waveSystem', () => {
     expect(getWaveForKills(3)).toBe(1);
     expect(getWaveForKills(4)).toBe(2);
     expect(getWaveForKills(11)).toBe(3);
+    expect(getWaveForKills(999)).toBe(LEVEL_COUNT);
   });
 
   it('increases pressure by wave', () => {

@@ -32,6 +32,9 @@ export class PreloaderScene extends Phaser.Scene {
     this.load.image('player-ship', 'assets/player-ship.png');
     this.load.image('enemy-red-ship', 'assets/enemy-red-ship.png');
     this.load.image('enemy-yellow-ship', 'assets/enemy-yellow-ship.png');
+    this.load.image('enemy-blue-ship', 'assets/LargeBlueShip.png');
+    this.load.image('enemy-purple-ship', 'assets/enemy-purple-ship.png');
+    this.load.image('enemy-green-ship', 'assets/enemy-green-ship.png');
 
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
       if (file.key === 'ships-sheet') {
@@ -62,6 +65,7 @@ export class PreloaderScene extends Phaser.Scene {
       this.createGeometryTextures();
     }
 
+    this.ensureVariantEnemyTextures();
     this.ensureBulletTexture();
     yandexService.markLoadingReady();
     this.scene.start('MainMenuScene');
@@ -354,6 +358,57 @@ export class PreloaderScene extends Phaser.Scene {
     }
 
     g.destroy();
+  }
+
+  private ensureVariantEnemyTextures(): void {
+    this.ensureTintedEnemyTexture('enemy-blue-ship', 0x60a5fa);
+    this.ensureTintedEnemyTexture('enemy-purple-ship', 0xc084fc);
+    this.ensureTintedEnemyTexture('enemy-green-ship', 0x4ade80);
+  }
+
+  private ensureTintedEnemyTexture(key: string, tint: number): void {
+    if (this.textures.exists(key)) {
+      return;
+    }
+
+    const sourceKey = this.getEnemyBaseTextureKey();
+    if (!sourceKey) {
+      return;
+    }
+
+    const sourceImage = this.textures.get(sourceKey).getSourceImage() as CanvasImageSource | null;
+    if (!sourceImage) {
+      return;
+    }
+
+    const { width, height } = this.getSourceDimensions(sourceImage);
+    const canvasTexture = this.textures.createCanvas(key, width, height);
+    if (!canvasTexture) {
+      return;
+    }
+
+    const ctx = canvasTexture.getContext();
+    const tintHex = `#${tint.toString(16).padStart(6, '0')}`;
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(sourceImage, 0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = tintHex;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+    canvasTexture.refresh();
+  }
+
+  private getEnemyBaseTextureKey(): string | null {
+    if (this.textures.exists('enemy-red-ship')) {
+      return 'enemy-red-ship';
+    }
+    if (this.textures.exists('enemy-yellow-ship')) {
+      return 'enemy-yellow-ship';
+    }
+    if (this.textures.exists('enemy-triangle')) {
+      return 'enemy-triangle';
+    }
+    return null;
   }
 
   private ensureBulletTexture(): void {

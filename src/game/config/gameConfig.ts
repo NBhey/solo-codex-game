@@ -1,7 +1,9 @@
 export const GAME_WIDTH = 960;
 export const GAME_HEIGHT = 540;
 
-export const KILLS_TO_WIN = 10;
+export const LEVEL_COUNT = 6;
+export const KILLS_PER_LEVEL = 4;
+export const KILLS_TO_WIN = LEVEL_COUNT * KILLS_PER_LEVEL;
 export const PROGRESS_STORAGE_KEY = 'triangle-arena-progress-v1';
 
 export const PLAYER_SPEED = 260;

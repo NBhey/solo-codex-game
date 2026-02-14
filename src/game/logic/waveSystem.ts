@@ -2,6 +2,8 @@ import {
   ENEMY_FIRE_MAX_MS,
   ENEMY_FIRE_MIN_MS,
   ENEMY_SPAWN_DELAY_MS,
+  KILLS_PER_LEVEL,
+  LEVEL_COUNT,
   MAX_ENEMIES_ON_FIELD
 } from '../config/gameConfig';
 
@@ -16,13 +18,13 @@ export interface WaveConfig {
   patternWeights: Record<EnemyPattern, number>;
 }
 
-const KILLS_PER_WAVE = 4;
 const MIN_SPAWN_DELAY_MS = 560;
 const MAX_ENEMIES_CAP = 12;
 
 export function getWaveForKills(kills: number): number {
   const normalizedKills = Math.max(0, Math.floor(kills));
-  return Math.floor(normalizedKills / KILLS_PER_WAVE) + 1;
+  const rawWave = Math.floor(normalizedKills / KILLS_PER_LEVEL) + 1;
+  return Math.min(LEVEL_COUNT, rawWave);
 }
 
 export function getWaveConfig(kills: number): WaveConfig {

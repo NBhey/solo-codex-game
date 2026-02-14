@@ -87,15 +87,24 @@ class YandexService {
     if (this.mockMode) {
       return;
     }
-    this.sdk?.features?.LoadingAPI?.ready?.();
+    try {
+      this.sdk?.features?.LoadingAPI?.ready?.();
+    } catch (error) {
+      console.warn('[YandexService] LoadingAPI.ready failed', error);
+    }
   }
 
   markGameplayStart(): void {
     if (this.mockMode || this.gameplayMarked) {
       return;
     }
-    this.gameplayMarked = true;
-    this.sdk?.features?.GameplayAPI?.start?.();
+    try {
+      this.sdk?.features?.GameplayAPI?.start?.();
+      this.gameplayMarked = true;
+    } catch (error) {
+      this.gameplayMarked = false;
+      console.warn('[YandexService] GameplayAPI.start failed', error);
+    }
   }
 
   markGameplayStop(): void {
@@ -103,7 +112,11 @@ class YandexService {
       return;
     }
     this.gameplayMarked = false;
-    this.sdk?.features?.GameplayAPI?.stop?.();
+    try {
+      this.sdk?.features?.GameplayAPI?.stop?.();
+    } catch (error) {
+      console.warn('[YandexService] GameplayAPI.stop failed', error);
+    }
   }
 
   async showInterstitial(): Promise<boolean> {
@@ -121,26 +134,36 @@ class YandexService {
         resolve(false);
       }, 3500);
 
-      this.sdk?.adv?.showFullscreenAdv({
-        callbacks: {
-          onClose: (wasShown) => {
-            if (settled) {
-              return;
+      try {
+        this.sdk?.adv?.showFullscreenAdv({
+          callbacks: {
+            onClose: (wasShown) => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              window.clearTimeout(timeoutId);
+              resolve(Boolean(wasShown));
+            },
+            onError: () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              window.clearTimeout(timeoutId);
+              resolve(false);
             }
-            settled = true;
-            window.clearTimeout(timeoutId);
-            resolve(Boolean(wasShown));
-          },
-          onError: () => {
-            if (settled) {
-              return;
-            }
-            settled = true;
-            window.clearTimeout(timeoutId);
-            resolve(false);
           }
+        });
+      } catch (error) {
+        if (settled) {
+          return;
         }
-      });
+        settled = true;
+        window.clearTimeout(timeoutId);
+        console.warn('[YandexService] showFullscreenAdv failed', error);
+        resolve(false);
+      }
     });
   }
 
@@ -160,29 +183,39 @@ class YandexService {
         resolve(false);
       }, 12000);
 
-      this.sdk?.adv?.showRewardedVideo({
-        callbacks: {
-          onRewarded: () => {
-            rewarded = true;
-          },
-          onClose: () => {
-            if (settled) {
-              return;
+      try {
+        this.sdk?.adv?.showRewardedVideo({
+          callbacks: {
+            onRewarded: () => {
+              rewarded = true;
+            },
+            onClose: () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              window.clearTimeout(timeoutId);
+              resolve(rewarded);
+            },
+            onError: () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              window.clearTimeout(timeoutId);
+              resolve(false);
             }
-            settled = true;
-            window.clearTimeout(timeoutId);
-            resolve(rewarded);
-          },
-          onError: () => {
-            if (settled) {
-              return;
-            }
-            settled = true;
-            window.clearTimeout(timeoutId);
-            resolve(false);
           }
+        });
+      } catch (error) {
+        if (settled) {
+          return;
         }
-      });
+        settled = true;
+        window.clearTimeout(timeoutId);
+        console.warn('[YandexService] showRewardedVideo failed', error);
+        resolve(false);
+      }
     });
   }
 

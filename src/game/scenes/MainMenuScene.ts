@@ -10,6 +10,7 @@ import { ensureSceneRegistered } from './sceneLoader';
 
 export class MainMenuScene extends Phaser.Scene {
   private statsText?: Phaser.GameObjects.Text;
+  private menuStatusText?: Phaser.GameObjects.Text;
   private modalObjects: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
@@ -36,8 +37,8 @@ export class MainMenuScene extends Phaser.Scene {
       lineSpacing: ui.lineSpacing
     });
 
-    const buttonYStart = GAME_HEIGHT * 0.48;
-    const step = ui.buttonHeight + ui.margin + 6;
+    const buttonYStart = GAME_HEIGHT * 0.44;
+    const step = ui.buttonHeight + ui.margin + 4;
 
     createTextButton(this, GAME_WIDTH / 2, buttonYStart, 'Start', () => {
       void this.startGame();
@@ -47,9 +48,23 @@ export class MainMenuScene extends Phaser.Scene {
       void this.showLeaderboard();
     }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
 
-    createTextButton(this, GAME_WIDTH / 2, buttonYStart + step * 2, 'Settings', () => {
+    createTextButton(this, GAME_WIDTH / 2, buttonYStart + step * 2, 'Upgrade Hull', () => {
+      this.tryPurchaseHullUpgrade();
+    }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
+
+    createTextButton(this, GAME_WIDTH / 2, buttonYStart + step * 3, 'Settings', () => {
       this.showSettings();
     }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
+
+    this.menuStatusText = this.add
+      .text(GAME_WIDTH / 2, buttonYStart + step * 3 + ui.buttonHeight * 0.9, this.hpUpgradeLabel(), {
+        fontFamily: 'Arial',
+        fontSize: px(ui.smallFont),
+        color: '#bfdbfe',
+        align: 'center',
+        lineSpacing: ui.lineSpacing
+      })
+      .setOrigin(0.5, 0);
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -171,7 +186,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.clearModal();
     const ui = getUiMetrics(this);
     const panelWidth = ui.modalLargeWidth;
-    const panelHeight = Math.round(panelWidth * 0.66);
+    const panelHeight = Math.min(GAME_HEIGHT - ui.margin * 2, Math.round(panelWidth * 0.52));
 
     const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
     shadow.setInteractive({ useHandCursor: true });
@@ -180,7 +195,7 @@ export class MainMenuScene extends Phaser.Scene {
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.38, 'Settings', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.33, 'Settings', {
         fontFamily: 'Arial',
         fontSize: px(ui.headingFont),
         color: '#f8fafc'
@@ -188,27 +203,21 @@ export class MainMenuScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const statusText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.2, this.soundLabel(), {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.1, this.soundLabel(), {
         fontFamily: 'Arial',
         fontSize: px(ui.bodyFont),
         color: '#e2e8f0'
       })
       .setOrigin(0.5);
 
-    const upgradeText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.04, this.hpUpgradeLabel(), {
-        fontFamily: 'Arial',
-        fontSize: px(ui.smallFont),
-        color: '#bfdbfe',
-        align: 'center',
-        lineSpacing: ui.lineSpacing
-      })
-      .setOrigin(0.5);
+    const compactButtonWidth = Math.min(panelWidth - 96, ui.buttonWidth - 18);
+    const compactButtonHeight = Math.max(34, ui.buttonHeight - 10);
+    const compactButtonFont = Math.max(14, ui.buttonFont - 2);
 
     const toggleSoundButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + panelHeight * 0.16,
+      GAME_HEIGHT / 2 + panelHeight * 0.12,
       'Toggle Sound',
       () => {
         const enabled = progressStore.toggleSound();
@@ -218,47 +227,33 @@ export class MainMenuScene extends Phaser.Scene {
         statusText.setText(this.soundLabel());
         this.refreshStats();
       },
-      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
+      { width: compactButtonWidth, height: compactButtonHeight, fontSize: compactButtonFont }
     );
 
-    const upgradeButton = createTextButton(
-      this,
-      GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + panelHeight * 0.34,
-      'Upgrade Hull',
-      () => {
-        audioService.playUiClick();
-        if (!progressStore.purchaseHpUpgrade()) {
-          upgradeText.setText(this.hpUpgradeLabel('Not enough credits or upgrade is already maxed.'));
-          return;
-        }
-
-        void progressStore.save();
-        upgradeText.setText(this.hpUpgradeLabel('Upgrade purchased. +1 max HP will apply next run.'));
-        this.refreshStats();
-      },
-      { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
-    );
-
-    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.5, 'Close', () => {
+    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.32, 'Close', () => {
       audioService.playUiClick();
       this.clearModal();
     }, {
-      width: Math.min(ui.buttonWidth, panelWidth - 120),
-      height: ui.buttonHeight,
-      fontSize: ui.buttonFont
+      width: compactButtonWidth,
+      height: compactButtonHeight,
+      fontSize: compactButtonFont
     });
 
-    this.modalObjects.push(
-      shadow,
-      panel,
-      title,
-      statusText,
-      upgradeText,
-      toggleSoundButton,
-      upgradeButton,
-      closeButton
-    );
+    this.modalObjects.push(shadow, panel, title, statusText, toggleSoundButton, closeButton);
+  }
+
+  private tryPurchaseHullUpgrade(): void {
+    audioService.playUiClick();
+    if (!progressStore.purchaseHpUpgrade()) {
+      this.menuStatusText?.setColor('#fca5a5');
+      this.menuStatusText?.setText(this.hpUpgradeLabel('Not enough credits or upgrade is already maxed.'));
+      return;
+    }
+
+    void progressStore.save();
+    this.refreshStats();
+    this.menuStatusText?.setColor('#86efac');
+    this.menuStatusText?.setText(this.hpUpgradeLabel('Upgrade purchased. +1 max HP will apply next run.'));
   }
 
   private soundLabel(): string {

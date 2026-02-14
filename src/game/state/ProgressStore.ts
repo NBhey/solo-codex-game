@@ -54,10 +54,12 @@ class ProgressStore {
   }
 
   recordWin(score: number, kills: number): number {
+    const normalizedScore = Math.max(0, Math.round(score));
+    const normalizedKills = Math.max(0, Math.floor(kills));
     this.progress.totalWins += 1;
-    this.progress.totalKills += kills;
-    this.progress.bestScore = Math.max(this.progress.bestScore, score);
-    const reward = getRunCreditsReward(kills, true);
+    this.progress.totalKills += normalizedKills;
+    this.progress.bestScore = Math.max(this.progress.bestScore, normalizedScore);
+    const reward = getRunCreditsReward(normalizedKills, true);
     this.progress.credits += reward;
     return reward;
   }

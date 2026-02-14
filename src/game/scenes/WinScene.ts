@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import { GAME_HEIGHT, GAME_WIDTH, KILLS_TO_WIN } from '../config/gameConfig';
 import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
 import { createTextButton } from '../ui/createTextButton';
@@ -25,7 +25,7 @@ export class WinScene extends Phaser.Scene {
   create(data: WinData): void {
     this.snapshotData = { ...data };
     const kills = data.kills ?? 0;
-    const score = data.score ?? 0;
+    const score = Math.max(0, Math.round(data.score ?? 0));
     const elapsedMs = data.elapsedMs ?? 0;
     const creditsEarned = data.creditsEarned ?? 0;
     const waveReached = data.waveReached ?? 1;
@@ -47,7 +47,7 @@ export class WinScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         GAME_HEIGHT * 0.34,
-        `Kills: ${kills} / 10\nWave reached: ${waveReached}\nScore: ${score}\nCredits earned: ${creditsEarned}\nTime: ${(
+        `Kills: ${kills} / ${KILLS_TO_WIN}\nWave reached: ${waveReached}\nScore: ${score}\nCredits earned: ${creditsEarned}\nTime: ${(
           elapsedMs / 1000
         ).toFixed(1)}s${reviveUsed ? '\nRevive used: Yes' : ''}`,
         {

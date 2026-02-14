@@ -1,4 +1,4 @@
-import type Phaser from 'phaser';
+import Phaser from 'phaser';
 
 export interface TextButtonOptions {
   width?: number;
@@ -46,26 +46,33 @@ export function createTextButton(
   container.add([bg, text]);
 
   const enableInteraction = (): void => {
-    bg.setInteractive({ useHandCursor: true });
+    container.setInteractive(
+      new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height),
+      Phaser.Geom.Rectangle.Contains
+    );
+    if (container.input) {
+      container.input.cursor = 'pointer';
+    }
   };
 
   enableInteraction();
 
   let enabled = true;
 
-  bg.on('pointerover', () => {
+  container.on('pointerover', () => {
     if (enabled) {
       bg.setFillStyle(hoverColor, 1);
     }
   });
 
-  bg.on('pointerout', () => {
+  container.on('pointerout', () => {
     if (enabled) {
       bg.setFillStyle(normalColor, 1);
     }
   });
 
-  bg.on('pointerdown', () => {
+  container.on('pointerdown', (_pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
+    event.stopPropagation();
     if (!enabled) {
       return;
     }
@@ -80,7 +87,7 @@ export function createTextButton(
       bg.setFillStyle(normalColor, 1);
       text.setAlpha(1);
     } else {
-      bg.disableInteractive();
+      container.disableInteractive();
       bg.setFillStyle(disabledColor, 1);
       text.setAlpha(0.8);
     }
