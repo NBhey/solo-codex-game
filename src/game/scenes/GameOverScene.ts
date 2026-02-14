@@ -4,6 +4,7 @@ import { audioService } from '../services/AudioService';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
+import { safeStartSceneWithWatchdog } from './sceneLoader';
 
 interface GameOverData {
   kills?: number;
@@ -19,12 +20,16 @@ interface GameSceneStartData {
 export class GameOverScene extends Phaser.Scene {
   private statusText?: Phaser.GameObjects.Text;
   private snapshotData: GameOverData = {};
+  private actionButtons: TextButton[] = [];
+  private transitionInProgress = false;
 
   constructor() {
     super('GameOverScene');
   }
 
   create(data: GameOverData): void {
+    this.actionButtons = [];
+    this.transitionInProgress = false;
     this.snapshotData = { ...data };
     const kills = data.kills ?? 0;
     const creditsEarned = data.creditsEarned ?? 0;
@@ -74,45 +79,90 @@ export class GameOverScene extends Phaser.Scene {
       GAME_HEIGHT * 0.67,
       'Play Again',
       () => {
-        this.restartRun(restartButton);
+        this.restartRun();
       },
       { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
 
-    createTextButton(
+    const mainMenuButton = createTextButton(
       this,
       GAME_WIDTH / 2,
       GAME_HEIGHT * 0.81,
       'Main Menu',
       () => {
-        audioService.playUiClick();
-        this.scene.start('MainMenuScene');
+        this.goToMainMenu();
       },
       { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
+    this.actionButtons = [restartButton, mainMenuButton];
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+      this.actionButtons = [];
+      this.transitionInProgress = false;
     });
   }
 
   private handleResize(): void {
-    if (!this.scene.isActive()) {
+    if (!this.scene.isActive() || this.transitionInProgress) {
       return;
     }
 
     this.scene.restart(this.snapshotData);
   }
 
-  private restartRun(button: TextButton): void {
+  private restartRun(): void {
+    if (!this.beginTransition()) {
+      return;
+    }
+
     audioService.playUiClick();
-    button.setEnabled(false);
     this.statusText?.setText('Restarting...');
 
     const data: GameSceneStartData = {
       showInterstitialAfterRestart: true
     };
-    this.scene.start('GameScene', data);
+    const started = safeStartSceneWithWatchdog(this, 'GameScene', data, {
+      fallbackKey: 'MainMenuScene',
+      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+    });
+    if (!started) {
+      this.statusText?.setText('Restart failed. Try again.');
+      this.resetTransition();
+    }
+  }
+
+  private goToMainMenu(): void {
+    if (!this.beginTransition()) {
+      return;
+    }
+
+    audioService.playUiClick();
+    const started = safeStartSceneWithWatchdog(this, 'MainMenuScene', undefined, {
+      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+    });
+    if (!started) {
+      this.resetTransition();
+    }
+  }
+
+  private beginTransition(): boolean {
+    if (this.transitionInProgress || !this.scene.isActive()) {
+      return false;
+    }
+
+    this.transitionInProgress = true;
+    this.actionButtons.forEach((button) => button.setEnabled(false));
+    return true;
+  }
+
+  private resetTransition(): void {
+    if (!this.scene.isActive()) {
+      return;
+    }
+
+    this.transitionInProgress = false;
+    this.actionButtons.forEach((button) => button.setEnabled(true));
   }
 }

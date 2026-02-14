@@ -20,3 +20,59 @@ export function isSceneRegistered(scene: Phaser.Scene, key: string): boolean {
     return false;
   }
 }
+
+interface SafeStartOptions {
+  fallbackKey?: string;
+  timeoutMs?: number;
+  shouldFallback?: () => boolean;
+}
+
+export function safeStartScene(scene: Phaser.Scene, key: string, data?: object): boolean {
+  try {
+    scene.scene.start(key, data);
+    return true;
+  } catch (error) {
+    console.error(`[${scene.scene.key}] scene.start(${key}) failed`, error);
+  }
+
+  try {
+    scene.scene.manager.start(key, data);
+    return true;
+  } catch (error) {
+    console.error(`[${scene.scene.key}] scene.manager.start(${key}) failed`, error);
+  }
+
+  return false;
+}
+
+export function safeStartSceneWithWatchdog(
+  scene: Phaser.Scene,
+  key: string,
+  data?: object,
+  options: SafeStartOptions = {}
+): boolean {
+  const fallbackKey = options.fallbackKey ?? 'MainMenuScene';
+  const timeoutMs = options.timeoutMs ?? 1400;
+  const shouldFallback = options.shouldFallback ?? (() => scene.scene.isActive());
+
+  let transitioned = false;
+  scene.events.once('shutdown', () => {
+    transitioned = true;
+  });
+
+  const started = safeStartScene(scene, key, data);
+  if (!started) {
+    safeStartScene(scene, fallbackKey);
+    return false;
+  }
+
+  globalThis.setTimeout(() => {
+    if (transitioned || !shouldFallback()) {
+      return;
+    }
+    console.error(`[${scene.scene.key}] Transition watchdog fired for ${key}, fallback -> ${fallbackKey}`);
+    safeStartScene(scene, fallbackKey);
+  }, timeoutMs);
+
+  return true;
+}

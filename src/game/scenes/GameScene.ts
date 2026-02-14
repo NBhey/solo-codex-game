@@ -26,7 +26,12 @@ import { progressStore } from '../state/ProgressStore';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
-import { ensureSceneRegistered, isSceneRegistered } from './sceneLoader';
+import {
+  ensureSceneRegistered,
+  isSceneRegistered,
+  safeStartScene,
+  safeStartSceneWithWatchdog
+} from './sceneLoader';
 
 interface WinSceneData {
   kills: number;
@@ -1651,18 +1656,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startSceneSafely(key: string, data?: object): void {
-    try {
-      this.scene.start(key, data);
-      return;
-    } catch (error) {
-      console.error(`[GameScene] scene.start(${key}) failed`, error);
-    }
-
-    try {
-      this.scene.manager.start(key, data);
-    } catch (error) {
-      console.error(`[GameScene] scene.manager.start(${key}) failed`, error);
-    }
+    safeStartScene(this, key, data);
   }
 
   private transitionWithWatchdog(
@@ -1671,20 +1665,11 @@ export class GameScene extends Phaser.Scene {
     fallbackKey: string = 'MainMenuScene',
     timeoutMs: number = 1400
   ): void {
-    let transitioned = false;
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      transitioned = true;
+    safeStartSceneWithWatchdog(this, key, data, {
+      fallbackKey,
+      timeoutMs,
+      shouldFallback: () => this.scene.isActive() && this.ending
     });
-
-    this.startSceneSafely(key, data);
-
-    window.setTimeout(() => {
-      if (transitioned || !this.scene.isActive() || !this.ending) {
-        return;
-      }
-      console.error(`[GameScene] Transition watchdog fired for ${key}`);
-      this.startSceneSafely(fallbackKey);
-    }, timeoutMs);
   }
 
   private handlePauseShortcuts(): void {
@@ -1806,10 +1791,15 @@ export class GameScene extends Phaser.Scene {
       GAME_HEIGHT / 2 + panelHeight * 0.28,
       'Main Menu',
       () => {
+        if (this.ending) {
+          return;
+        }
         audioService.playUiClick();
         this.ending = true;
+        mainMenuButton.setEnabled(false);
+        resumeButton.setEnabled(false);
         this.stopGameplayObjects();
-        this.scene.start('MainMenuScene');
+        this.transitionWithWatchdog('MainMenuScene');
       },
       { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
@@ -1984,6 +1974,9 @@ export class GameScene extends Phaser.Scene {
         }),
         4000
       );
+      if (!this.scene.isActive()) {
+        return;
+      }
 
       const data: GameOverSceneData = {
         kills: this.kills,
@@ -2033,6 +2026,9 @@ export class GameScene extends Phaser.Scene {
       );
       if (!winSceneReady) {
         throw new Error('WinScene registration timed out');
+      }
+      if (!this.scene.isActive()) {
+        return;
       }
 
       const data: WinSceneData = {

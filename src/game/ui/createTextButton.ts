@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { createTextButtonPressController } from './textButtonPressController';
 
 export interface TextButtonOptions {
   width?: number;
@@ -57,41 +58,86 @@ export function createTextButton(
 
   enableInteraction();
 
-  let enabled = true;
+  const press = createTextButtonPressController();
+
+  const isPointerInside = (pointer: Phaser.Input.Pointer): boolean => {
+    const bounds = container.getBounds();
+    return bounds.contains(pointer.x, pointer.y);
+  };
+
+  const applyVisualState = (): void => {
+    if (!press.isEnabled()) {
+      bg.setFillStyle(disabledColor, 1);
+      text.setAlpha(0.8);
+      return;
+    }
+
+    bg.setFillStyle(press.isPressed() ? hoverColor : normalColor, 1);
+    text.setAlpha(1);
+  };
 
   container.on('pointerover', () => {
-    if (enabled) {
+    if (press.isEnabled() && !press.isPressed()) {
       bg.setFillStyle(hoverColor, 1);
     }
   });
 
-  container.on('pointerout', () => {
-    if (enabled) {
+  container.on('pointerout', (pointer: Phaser.Input.Pointer) => {
+    press.cancelPointer(pointer.id);
+    if (press.isEnabled()) {
       bg.setFillStyle(normalColor, 1);
     }
   });
 
-  container.on('pointerdown', (_pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
-    event.stopPropagation();
-    if (!enabled) {
-      return;
+  container.on(
+    'pointerdown',
+    (pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
+      event.stopPropagation();
+      if (!press.pointerDown(pointer.id)) {
+        return;
+      }
+      bg.setFillStyle(hoverColor, 1);
     }
-    bg.setFillStyle(normalColor, 1);
-    onClick();
+  );
+
+  container.on(
+    'pointerup',
+    (pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
+      event.stopPropagation();
+      const shouldFire = press.pointerUp(pointer.id, isPointerInside(pointer));
+      applyVisualState();
+      if (!shouldFire) {
+        return;
+      }
+      onClick();
+    }
+  );
+
+  container.on('pointerupoutside', (pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
+    event.stopPropagation();
+    press.cancelPointer(pointer.id);
+    applyVisualState();
   });
 
   container.setEnabled = (value: boolean) => {
-    enabled = value;
-    if (enabled) {
+    press.setEnabled(value);
+    if (press.isEnabled()) {
       enableInteraction();
-      bg.setFillStyle(normalColor, 1);
-      text.setAlpha(1);
     } else {
       container.disableInteractive();
-      bg.setFillStyle(disabledColor, 1);
-      text.setAlpha(0.8);
     }
+    applyVisualState();
   };
+
+  if (!press.isEnabled()) {
+    container.disableInteractive();
+  }
+
+  applyVisualState();
+
+  container.on('destroy', () => {
+    container.removeAllListeners();
+  });
 
   return container;
 }
