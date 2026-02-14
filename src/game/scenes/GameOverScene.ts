@@ -125,7 +125,7 @@ export class GameOverScene extends Phaser.Scene {
     };
     const started = safeStartSceneWithWatchdog(this, 'GameScene', data, {
       fallbackKey: 'MainMenuScene',
-      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+      shouldFallback: () => this.transitionInProgress
     });
     if (!started) {
       this.statusText?.setText('Restart failed. Try again.');
@@ -140,7 +140,7 @@ export class GameOverScene extends Phaser.Scene {
 
     audioService.playUiClick();
     const started = safeStartSceneWithWatchdog(this, 'MainMenuScene', undefined, {
-      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+      shouldFallback: () => this.transitionInProgress
     });
     if (!started) {
       this.resetTransition();

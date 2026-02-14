@@ -27,11 +27,12 @@ import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
 import {
-  ensureSceneRegistered,
   isSceneRegistered,
   safeStartScene,
   safeStartSceneWithWatchdog
 } from './sceneLoader';
+import { WinScene } from './WinScene';
+import { GameOverScene } from './GameOverScene';
 
 interface WinSceneData {
   kills: number;
@@ -134,6 +135,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.resetRuntimeState();
+    this.ensureEndScenesRegistered();
     this.playerMaxHp = progressStore.getPlayerMaxHp(PLAYER_MAX_HP);
     this.hp = this.playerMaxHp;
     this.input.setDefaultCursor('crosshair');
@@ -1631,28 +1633,13 @@ export class GameScene extends Phaser.Scene {
     ]);
   }
 
-  private async ensureSceneReadyWithTimeout(
-    key: string,
-    loader: () => Promise<Phaser.Types.Scenes.SceneType>,
-    timeoutMs: number
-  ): Promise<boolean> {
-    const ready = await this.awaitWithTimeout(
-      ensureSceneRegistered(this, key, loader)
-        .then(() => true)
-        .catch((error) => {
-          console.error(`[GameScene] Failed to register ${key}`, error);
-          return false;
-        }),
-      timeoutMs
-    );
-
-    if (ready === false) {
-      return false;
+  private ensureEndScenesRegistered(): void {
+    if (!isSceneRegistered(this, 'WinScene')) {
+      this.scene.add('WinScene', WinScene, false);
     }
-    if (ready === true) {
-      return true;
+    if (!isSceneRegistered(this, 'GameOverScene')) {
+      this.scene.add('GameOverScene', GameOverScene, false);
     }
-    return isSceneRegistered(this, key);
   }
 
   private startSceneSafely(key: string, data?: object): void {
@@ -1668,7 +1655,7 @@ export class GameScene extends Phaser.Scene {
     safeStartSceneWithWatchdog(this, key, data, {
       fallbackKey,
       timeoutMs,
-      shouldFallback: () => this.scene.isActive() && this.ending
+      shouldFallback: () => this.ending
     });
   }
 
@@ -1958,15 +1945,6 @@ export class GameScene extends Phaser.Scene {
         revive_used: this.reviveUsed
       });
 
-      const gameOverReady = await this.ensureSceneReadyWithTimeout(
-        'GameOverScene',
-        async () => (await import('./GameOverScene')).GameOverScene,
-        1800
-      );
-      if (!gameOverReady) {
-        throw new Error('GameOverScene registration timed out');
-      }
-
       await this.awaitWithTimeout(
         yandexService.showInterstitial().catch((error) => {
           console.error('[GameScene] Failed to show interstitial after loss', error);
@@ -2018,15 +1996,6 @@ export class GameScene extends Phaser.Scene {
         credits_earned: creditsEarned,
         revive_used: this.reviveUsed
       });
-
-      const winSceneReady = await this.ensureSceneReadyWithTimeout(
-        'WinScene',
-        async () => (await import('./WinScene')).WinScene,
-        1800
-      );
-      if (!winSceneReady) {
-        throw new Error('WinScene registration timed out');
-      }
       if (!this.scene.isActive()) {
         return;
       }

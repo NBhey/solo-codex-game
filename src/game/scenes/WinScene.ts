@@ -80,7 +80,7 @@ export class WinScene extends Phaser.Scene {
       this,
       GAME_WIDTH / 2,
       GAME_HEIGHT * 0.79,
-      'Play Again',
+      'Start New Game',
       () => {
         void this.restartRun();
       },
@@ -131,7 +131,7 @@ export class WinScene extends Phaser.Scene {
 
     const started = safeStartSceneWithWatchdog(this, 'GameScene', undefined, {
       fallbackKey: 'MainMenuScene',
-      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+      shouldFallback: () => this.transitionInProgress
     });
     if (!started) {
       this.resetTransition();
@@ -145,7 +145,7 @@ export class WinScene extends Phaser.Scene {
 
     audioService.playUiClick();
     const started = safeStartSceneWithWatchdog(this, 'MainMenuScene', undefined, {
-      shouldFallback: () => this.scene.isActive() && this.transitionInProgress
+      shouldFallback: () => this.transitionInProgress
     });
     if (!started) {
       this.resetTransition();

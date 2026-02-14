@@ -21,18 +21,28 @@ class MockEvents {
 interface MockSceneOptions {
   throwOnStart?: boolean;
   throwOnManagerStart?: boolean;
-  active?: boolean;
+  activateTargetOnStart?: boolean;
 }
 
 function createMockScene(options: MockSceneOptions = {}): {
   scene: Phaser.Scene;
   events: MockEvents;
   calls: string[];
-  setActive: (active: boolean) => void;
+  setSourceActive: (active: boolean) => void;
+  setSceneActive: (key: string, active: boolean) => void;
 } {
   const calls: string[] = [];
   const events = new MockEvents();
-  let isActive = options.active ?? true;
+  const activeScenes = new Set<string>();
+  let sourceActive = true;
+  const activateTargetOnStart = options.activateTargetOnStart ?? true;
+
+  const markStarted = (key: string): void => {
+    if (activateTargetOnStart) {
+      activeScenes.add(key);
+    }
+    sourceActive = false;
+  };
 
   const scene = {
     events,
@@ -43,6 +53,7 @@ function createMockScene(options: MockSceneOptions = {}): {
         if (options.throwOnStart) {
           throw new Error('scene.start failed');
         }
+        markStarted(key);
       },
       manager: {
         start: (key: string): void => {
@@ -50,9 +61,12 @@ function createMockScene(options: MockSceneOptions = {}): {
           if (options.throwOnManagerStart) {
             throw new Error('scene.manager.start failed');
           }
+          markStarted(key);
         }
       },
-      isActive: (): boolean => isActive,
+      isActive: (key?: string): boolean => (key ? activeScenes.has(key) : sourceActive),
+      isPaused: (): boolean => false,
+      isSleeping: (): boolean => false,
       get: (): undefined => undefined
     }
   } as unknown as Phaser.Scene;
@@ -61,8 +75,15 @@ function createMockScene(options: MockSceneOptions = {}): {
     scene,
     events,
     calls,
-    setActive: (active: boolean) => {
-      isActive = active;
+    setSourceActive: (active: boolean) => {
+      sourceActive = active;
+    },
+    setSceneActive: (key: string, active: boolean) => {
+      if (active) {
+        activeScenes.add(key);
+        return;
+      }
+      activeScenes.delete(key);
     }
   };
 }
@@ -90,8 +111,8 @@ describe('sceneLoader safe starts', () => {
     expect(mock.calls).toEqual(['scene.start:MainMenuScene', 'scene.manager.start:MainMenuScene']);
   });
 
-  it('fires watchdog fallback when shutdown does not happen', () => {
-    const mock = createMockScene();
+  it('fires watchdog fallback when target scene is not running', () => {
+    const mock = createMockScene({ activateTargetOnStart: false });
     safeStartSceneWithWatchdog(mock.scene, 'WinScene', undefined, {
       fallbackKey: 'MainMenuScene',
       timeoutMs: 250,
@@ -103,28 +124,27 @@ describe('sceneLoader safe starts', () => {
     expect(mock.calls).toEqual(['scene.start:WinScene', 'scene.start:MainMenuScene']);
   });
 
-  it('does not fire watchdog fallback after shutdown', () => {
-    const mock = createMockScene();
-    safeStartSceneWithWatchdog(mock.scene, 'WinScene', undefined, {
-      fallbackKey: 'MainMenuScene',
-      timeoutMs: 250,
-      shouldFallback: () => true
-    });
-    mock.events.emit('shutdown');
-    vi.advanceTimersByTime(260);
-
-    expect(mock.calls).toEqual(['scene.start:WinScene']);
-  });
-
-  it('does not fire watchdog fallback when scene became inactive', () => {
+  it('does not fire watchdog fallback when target scene is active', () => {
     const mock = createMockScene();
     safeStartSceneWithWatchdog(mock.scene, 'WinScene', undefined, {
       fallbackKey: 'MainMenuScene',
       timeoutMs: 250
     });
-    mock.setActive(false);
     vi.advanceTimersByTime(260);
 
     expect(mock.calls).toEqual(['scene.start:WinScene']);
+  });
+
+  it('can fallback even if source scene already became inactive', () => {
+    const mock = createMockScene({ activateTargetOnStart: false });
+    safeStartSceneWithWatchdog(mock.scene, 'WinScene', undefined, {
+      fallbackKey: 'MainMenuScene',
+      timeoutMs: 250,
+      shouldFallback: () => true
+    });
+    mock.setSourceActive(false);
+    vi.advanceTimersByTime(260);
+
+    expect(mock.calls).toEqual(['scene.start:WinScene', 'scene.start:MainMenuScene']);
   });
 });
