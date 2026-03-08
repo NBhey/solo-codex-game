@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { GAME_HEIGHT, GAME_WIDTH, KILLS_TO_WIN } from '../config/gameConfig';
+import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import type { LevelId } from '../config/levelConfig';
 import { audioService } from '../services/AudioService';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
@@ -8,11 +9,17 @@ import { safeStartSceneWithWatchdog } from './sceneLoader';
 
 interface WinData {
   kills?: number;
+  killsToWin?: number;
   score?: number;
   elapsedMs?: number;
   creditsEarned?: number;
   waveReached?: number;
   reviveUsed?: boolean;
+  levelId?: LevelId;
+}
+
+interface GameSceneStartData {
+  levelId?: LevelId;
 }
 
 export class WinScene extends Phaser.Scene {
@@ -29,6 +36,7 @@ export class WinScene extends Phaser.Scene {
     this.transitionInProgress = false;
     this.snapshotData = { ...data };
     const kills = data.kills ?? 0;
+    const killsToWin = data.killsToWin ?? kills;
     const score = Math.max(0, Math.round(data.score ?? 0));
     const elapsedMs = data.elapsedMs ?? 0;
     const creditsEarned = data.creditsEarned ?? 0;
@@ -52,7 +60,7 @@ export class WinScene extends Phaser.Scene {
       .setDepth(2);
 
     this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.33, 'Победа!', {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.33, '\u041f\u043e\u0431\u0435\u0434\u0430!', {
         fontFamily: 'Arial',
         fontSize: px(ui.sceneTitleFont),
         color: '#86efac'
@@ -64,9 +72,9 @@ export class WinScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         GAME_HEIGHT / 2 - panelHeight * 0.04,
-        `Убито: ${kills} / ${KILLS_TO_WIN}\nВолна: ${waveReached}\nСчет: ${score}\nКредитов: ${creditsEarned}\nВремя: ${(
+        `Kills: ${kills} / ${killsToWin}\nWave: ${waveReached}\nScore: ${score}\nCredits: ${creditsEarned}\nTime: ${(
           elapsedMs / 1000
-        ).toFixed(1)}с${reviveUsed ? '\nРевайв использован: Да' : ''}`,
+        ).toFixed(1)}s${reviveUsed ? '\nRevive used: Yes' : ''}`,
         {
           fontFamily: 'Arial',
           fontSize: px(ui.bodyFont),
@@ -82,7 +90,7 @@ export class WinScene extends Phaser.Scene {
       this,
       GAME_WIDTH / 2,
       GAME_HEIGHT / 2 + panelHeight * 0.22,
-      'Начать сначала',
+      '\u041d\u0430\u0447\u0430\u0442\u044c \u0441\u043d\u0430\u0447\u0430\u043b\u0430',
       () => {
         this.restartRun();
       },
@@ -93,7 +101,7 @@ export class WinScene extends Phaser.Scene {
       this,
       GAME_WIDTH / 2,
       GAME_HEIGHT / 2 + panelHeight * 0.36,
-      'Выйти в меню',
+      '\u0412\u044b\u0439\u0442\u0438 \u0432 \u043c\u0435\u043d\u044e',
       () => {
         this.goToMainMenu();
       },
@@ -125,7 +133,10 @@ export class WinScene extends Phaser.Scene {
     }
 
     audioService.playUiClick();
-    const started = safeStartSceneWithWatchdog(this, 'GameScene', undefined, {
+    const data: GameSceneStartData = {
+      levelId: this.snapshotData.levelId
+    };
+    const started = safeStartSceneWithWatchdog(this, 'GameScene', data, {
       fallbackKey: 'MainMenuScene',
       shouldFallback: () => this.transitionInProgress
     });

@@ -5,17 +5,20 @@ import {
   ENEMY_SPEED,
   GAME_HEIGHT,
   GAME_WIDTH,
-  KILLS_TO_WIN,
-  LEVEL_COUNT,
   PLAYER_BULLET_SPEED,
   PLAYER_MAX_HP,
   PLAYER_SHOT_COOLDOWN_MS,
   PLAYER_SPEED
 } from '../config/gameConfig';
+import {
+  getLevelConfig,
+  type GameLevelConfig,
+  type LevelEnemyKind,
+  type LevelId
+} from '../config/levelConfig';
 import { getRunCreditsReward } from '../logic/metaProgression';
 import {
   getEnemyFireDelayRange,
-  getWaveConfig,
   pickEnemyPattern,
   type EnemyPattern,
   type WaveConfig
@@ -26,21 +29,19 @@ import { progressStore } from '../state/ProgressStore';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
-import {
-  isSceneRegistered,
-  safeStartScene,
-  safeStartSceneWithWatchdog
-} from './sceneLoader';
+import { isSceneRegistered, safeStartScene, safeStartSceneWithWatchdog } from './sceneLoader';
 import { WinScene } from './WinScene';
 import { GameOverScene } from './GameOverScene';
 
 interface WinSceneData {
   kills: number;
+  killsToWin: number;
   score: number;
   elapsedMs: number;
   creditsEarned: number;
   waveReached: number;
   reviveUsed: boolean;
+  levelId: LevelId;
 }
 
 interface GameOverSceneData {
@@ -48,14 +49,23 @@ interface GameOverSceneData {
   creditsEarned: number;
   waveReached: number;
   reviveUsed: boolean;
+  levelId: LevelId;
 }
 
 interface GameSceneData {
   showInterstitialAfterRestart?: boolean;
+  levelId?: LevelId;
 }
 
 type PauseState = 'none' | 'manual' | 'revive';
-type EnemyKind = 'standard' | 'blue' | 'purple' | 'green';
+type EnemyKind = LevelEnemyKind;
+
+interface LevelWaveState {
+  wave: number;
+  totalWaves: number;
+  waveConfig: WaveConfig;
+  enemyKinds: EnemyKind[];
+}
 
 export class GameScene extends Phaser.Scene {
   private static readonly PLAYER_TARGET_SIZE = 40;
@@ -86,8 +96,19 @@ export class GameScene extends Phaser.Scene {
   private kills = 0;
   private hp = PLAYER_MAX_HP;
   private playerMaxHp = PLAYER_MAX_HP;
+  private levelConfig: GameLevelConfig = getLevelConfig(1);
+  private killsToWin = this.levelConfig.killsToWin;
+  private totalWaves = this.levelConfig.waves.length;
   private wave = 1;
-  private waveConfig: WaveConfig = getWaveConfig(0);
+  private waveConfig: WaveConfig = {
+    wave: 1,
+    spawnDelayMs: this.levelConfig.waves[0].spawnDelayMs,
+    maxEnemiesOnField: this.levelConfig.waves[0].maxEnemiesOnField,
+    enemySpeedMultiplier: this.levelConfig.waves[0].enemySpeedMultiplier,
+    enemyFireRateMultiplier: this.levelConfig.waves[0].enemyFireRateMultiplier,
+    patternWeights: { ...this.levelConfig.waves[0].patternWeights }
+  };
+  private activeEnemyKinds: EnemyKind[] = [...this.levelConfig.waves[0].enemyKinds];
 
   private killsText!: Phaser.GameObjects.Text;
   private hpText!: Phaser.GameObjects.Text;
@@ -131,6 +152,13 @@ export class GameScene extends Phaser.Scene {
 
   init(data?: GameSceneData): void {
     this.showInterstitialAfterRestart = Boolean(data?.showInterstitialAfterRestart);
+    this.levelConfig = getLevelConfig(data?.levelId);
+    this.killsToWin = this.levelConfig.killsToWin;
+    this.totalWaves = this.levelConfig.waves.length;
+    const initialWave = this.resolveLevelWaveState(0);
+    this.wave = initialWave.wave;
+    this.waveConfig = initialWave.waveConfig;
+    this.activeEnemyKinds = initialWave.enemyKinds;
   }
 
   create(): void {
@@ -214,8 +242,11 @@ export class GameScene extends Phaser.Scene {
     this.kills = 0;
     this.hp = PLAYER_MAX_HP;
     this.playerMaxHp = PLAYER_MAX_HP;
-    this.wave = 1;
-    this.waveConfig = getWaveConfig(0);
+    const initialWave = this.resolveLevelWaveState(0);
+    this.wave = initialWave.wave;
+    this.totalWaves = initialWave.totalWaves;
+    this.waveConfig = initialWave.waveConfig;
+    this.activeEnemyKinds = initialWave.enemyKinds;
     this.lastShotAt = 0;
     this.lastEnemyShotSfxAt = 0;
     this.spawnTimer = undefined;
@@ -243,7 +274,7 @@ export class GameScene extends Phaser.Scene {
       'enemy-triangle',
       'enemy-blue-ship',
       'enemy-purple-ship',
-      'enemy-green-ship',
+      'enemy-green-ship'
     ];
     this.enemyBaseTextureKey =
       preferredEnemyTextures.find((key) => this.textures.exists(key)) ?? 'enemy-triangle';
@@ -256,7 +287,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const scale = Math.min(GameScene.PLAYER_TARGET_SIZE / width, GameScene.PLAYER_TARGET_SIZE / height);
+    const scale = Math.min(
+      GameScene.PLAYER_TARGET_SIZE / width,
+      GameScene.PLAYER_TARGET_SIZE / height
+    );
     if (Number.isFinite(scale) && scale > 0) {
       this.player.setScale(scale);
     }
@@ -405,31 +439,46 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createHud(): void {
-    this.killsText = this.add.text(0, 0, `Kills: ${this.kills}/${KILLS_TO_WIN}`, {
-      fontFamily: 'Arial',
-      fontSize: '20px',
-      color: '#ecfeff'
-    }).setScrollFactor(0).setDepth(20);
-    this.hpText = this.add.text(0, 0, `HP: ${this.hp}/${this.playerMaxHp}`, {
-      fontFamily: 'Arial',
-      fontSize: '20px',
-      color: '#dcfce7'
-    }).setScrollFactor(0).setDepth(20);
-    this.waveText = this.add.text(0, 0, `Wave: ${this.wave}/${LEVEL_COUNT}`, {
-      fontFamily: 'Arial',
-      fontSize: '18px',
-      color: '#bfdbfe'
-    }).setScrollFactor(0).setDepth(20);
-    this.creditsText = this.add.text(0, 0, 'Run Credits: 0', {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: '#fef3c7'
-    }).setScrollFactor(0).setDepth(20);
-    this.rocketsText = this.add.text(0, 0, 'Rockets: 0', {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: '#fecaca'
-    }).setScrollFactor(0).setDepth(20);
+    this.killsText = this.add
+      .text(0, 0, `Kills: ${this.kills}/${this.killsToWin}`, {
+        fontFamily: 'Arial',
+        fontSize: '20px',
+        color: '#ecfeff'
+      })
+      .setScrollFactor(0)
+      .setDepth(20);
+    this.hpText = this.add
+      .text(0, 0, `HP: ${this.hp}/${this.playerMaxHp}`, {
+        fontFamily: 'Arial',
+        fontSize: '20px',
+        color: '#dcfce7'
+      })
+      .setScrollFactor(0)
+      .setDepth(20);
+    this.waveText = this.add
+      .text(0, 0, `Wave: ${this.wave}/${this.totalWaves}`, {
+        fontFamily: 'Arial',
+        fontSize: '18px',
+        color: '#bfdbfe'
+      })
+      .setScrollFactor(0)
+      .setDepth(20);
+    this.creditsText = this.add
+      .text(0, 0, 'Run Credits: 0', {
+        fontFamily: 'Arial',
+        fontSize: '17px',
+        color: '#fef3c7'
+      })
+      .setScrollFactor(0)
+      .setDepth(20);
+    this.rocketsText = this.add
+      .text(0, 0, 'Rockets: 0', {
+        fontFamily: 'Arial',
+        fontSize: '17px',
+        color: '#fecaca'
+      })
+      .setScrollFactor(0)
+      .setDepth(20);
     this.statusText = this.add
       .text(0, 0, this.getControlsHint(), {
         fontFamily: 'Arial',
@@ -441,12 +490,14 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
 
     this.updateRocketHud();
+    this.updateWaveHud();
     this.applyHudLayout();
   }
 
   private applyHudLayout(): void {
     const ui = getUiMetrics(this);
     const margin = ui.margin;
+    const showWaveHud = this.levelConfig.showWaveHud && this.totalWaves > 1;
 
     this.killsText.setPosition(margin, margin * 0.7);
     this.killsText.setFontSize(px(ui.hudFont));
@@ -454,16 +505,21 @@ export class GameScene extends Phaser.Scene {
     this.hpText.setPosition(margin, margin * 0.7 + ui.hudFont + 4);
     this.hpText.setFontSize(px(ui.hudFont));
 
-    this.waveText.setPosition(margin, margin * 0.7 + ui.hudFont * 2 + 8);
-    this.waveText.setFontSize(px(ui.hudCompactFont));
+    if (showWaveHud) {
+      this.waveText.setVisible(true);
+      this.waveText.setPosition(margin, margin * 0.7 + ui.hudFont * 2 + 8);
+      this.waveText.setFontSize(px(ui.hudCompactFont));
+    } else {
+      this.waveText.setVisible(false);
+    }
 
-    this.creditsText.setPosition(margin, margin * 0.7 + ui.hudFont * 2 + ui.hudCompactFont + 12);
+    const creditsY = showWaveHud
+      ? margin * 0.7 + ui.hudFont * 2 + ui.hudCompactFont + 12
+      : margin * 0.7 + ui.hudFont * 2 + 10;
+    this.creditsText.setPosition(margin, creditsY);
     this.creditsText.setFontSize(px(ui.hudCompactFont));
 
-    this.rocketsText.setPosition(
-      margin,
-      margin * 0.7 + ui.hudFont * 2 + ui.hudCompactFont * 2 + 16
-    );
+    this.rocketsText.setPosition(margin, creditsY + ui.hudCompactFont + 4);
     this.rocketsText.setFontSize(px(ui.hudCompactFont));
 
     this.statusText.setPosition(GAME_WIDTH / 2, margin * 0.7);
@@ -496,8 +552,14 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.touchMoveHintRect = this.add.rectangle(0, 0, 10, 10, 0x1e3a5f, 0.16).setOrigin(0, 1).setDepth(1);
-    this.touchAimHintRect = this.add.rectangle(0, 0, 10, 10, 0x6b2d45, 0.16).setOrigin(0, 1).setDepth(1);
+    this.touchMoveHintRect = this.add
+      .rectangle(0, 0, 10, 10, 0x1e3a5f, 0.16)
+      .setOrigin(0, 1)
+      .setDepth(1);
+    this.touchAimHintRect = this.add
+      .rectangle(0, 0, 10, 10, 0x6b2d45, 0.16)
+      .setOrigin(0, 1)
+      .setDepth(1);
     this.touchMoveHintRect.setScrollFactor(0);
     this.touchAimHintRect.setScrollFactor(0);
 
@@ -748,7 +810,10 @@ export class GameScene extends Phaser.Scene {
     this.physics.velocityFromRotation(angle, speed, body.velocity);
     bullet.setRotation(angle);
     const lifetimeMultiplier = options.lifetimeMultiplier ?? 1;
-    bullet.setData('expiresAt', this.time.now + Math.round(BULLET_LIFETIME_MS * lifetimeMultiplier));
+    bullet.setData(
+      'expiresAt',
+      this.time.now + Math.round(BULLET_LIFETIME_MS * lifetimeMultiplier)
+    );
     return bullet;
   }
 
@@ -778,7 +843,11 @@ export class GameScene extends Phaser.Scene {
     const margin = 80;
     const x = Phaser.Math.Between(Math.round(view.left + margin), Math.round(view.right - margin));
     const y = Phaser.Math.Between(Math.round(view.top + margin), Math.round(view.bottom - margin));
-    const pickup = this.pickups.get(x, y, 'pickup-rocket-dot') as Phaser.Physics.Arcade.Image | null;
+    const pickup = this.pickups.get(
+      x,
+      y,
+      'pickup-rocket-dot'
+    ) as Phaser.Physics.Arcade.Image | null;
     if (!pickup) {
       return;
     }
@@ -798,7 +867,11 @@ export class GameScene extends Phaser.Scene {
     const first = firstObject as Phaser.Physics.Arcade.Image;
     const second = secondObject as Phaser.Physics.Arcade.Image;
 
-    const pickup = this.pickups.contains(first) ? first : this.pickups.contains(second) ? second : null;
+    const pickup = this.pickups.contains(first)
+      ? first
+      : this.pickups.contains(second)
+        ? second
+        : null;
     const player = first === this.player ? first : second === this.player ? second : null;
     if (!pickup || !player || !pickup.active || !player.active || this.ending) {
       return;
@@ -879,17 +952,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getAvailableEnemyKinds(): EnemyKind[] {
-    const kinds: EnemyKind[] = ['standard'];
-    if (this.waveConfig.wave >= 2) {
-      kinds.push('blue');
+    if (this.activeEnemyKinds.length > 0) {
+      return [...this.activeEnemyKinds];
     }
-    if (this.waveConfig.wave >= 3) {
-      kinds.push('purple');
-    }
-    if (this.waveConfig.wave >= 4) {
-      kinds.push('green');
-    }
-    return kinds;
+    return ['standard'];
   }
 
   private getEnemyTextureForKind(kind: EnemyKind): string {
@@ -948,8 +1014,8 @@ export class GameScene extends Phaser.Scene {
     enemy.setScale(1);
 
     if (kind === 'blue') {
-      const targetWidth = (this.player.displayWidth || GameScene.PLAYER_TARGET_SIZE) * 1.1;
-      const targetHeight = (this.player.displayHeight || GameScene.PLAYER_TARGET_SIZE) * 1.1;
+      const targetWidth = (this.player.displayWidth || GameScene.PLAYER_TARGET_SIZE) * 2.3;
+      const targetHeight = (this.player.displayHeight || GameScene.PLAYER_TARGET_SIZE) * 2.3;
       const scale = Math.min(targetWidth / baseWidth, targetHeight / baseHeight);
       if (Number.isFinite(scale) && scale > 0) {
         enemy.setScale(scale);
@@ -1061,7 +1127,12 @@ export class GameScene extends Phaser.Scene {
 
       const pattern = (enemy.getData('pattern') as EnemyPattern | undefined) ?? 'chaser';
       const kind = (enemy.getData('kind') as EnemyKind | undefined) ?? 'standard';
-      const angleToPlayer = Phaser.Math.Angle.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+      const angleToPlayer = Phaser.Math.Angle.Between(
+        enemy.x,
+        enemy.y,
+        this.player.x,
+        this.player.y
+      );
       const baseSpeed = ENEMY_SPEED * this.waveConfig.enemySpeedMultiplier;
 
       if (pattern === 'strafer') {
@@ -1143,9 +1214,10 @@ export class GameScene extends Phaser.Scene {
     const rangeMultiplier = GameScene.BOOMERANG_RANGE_MULTIPLIER;
     const spinDir = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
     const launchAngle = Phaser.Math.Angle.Between(enemy.x, enemy.y, leadX, leadY);
-    const lateralOffset = new Phaser.Math.Vector2(-Math.sin(launchAngle), Math.cos(launchAngle)).scale(
-      72 * spinDir
-    );
+    const lateralOffset = new Phaser.Math.Vector2(
+      -Math.sin(launchAngle),
+      Math.cos(launchAngle)
+    ).scale(72 * spinDir);
     const boomerang = this.createBullet(
       this.enemyBullets,
       enemy.x,
@@ -1169,11 +1241,17 @@ export class GameScene extends Phaser.Scene {
     boomerang.setData('boomerangSpeed', speed);
     boomerang.setData('boomerangReturnX', enemy.x + lateralOffset.x);
     boomerang.setData('boomerangReturnY', enemy.y + lateralOffset.y);
-    const straightDelay = Phaser.Math.Between(Math.round(260 * rangeMultiplier), Math.round(460 * rangeMultiplier));
+    const straightDelay = Phaser.Math.Between(
+      Math.round(260 * rangeMultiplier),
+      Math.round(460 * rangeMultiplier)
+    );
     const curveDuration = Phaser.Math.Between(180, 260);
     boomerang.setData('boomerangCurveAt', this.time.now + straightDelay);
     boomerang.setData('boomerangTurnAt', this.time.now + straightDelay + curveDuration);
-    boomerang.setData('expiresAt', this.time.now + Math.round(BULLET_LIFETIME_MS * (2.2 * rangeMultiplier)));
+    boomerang.setData(
+      'expiresAt',
+      this.time.now + Math.round(BULLET_LIFETIME_MS * (2.2 * rangeMultiplier))
+    );
   }
 
   private createGreenSpreadShot(enemy: Phaser.Physics.Arcade.Image): void {
@@ -1384,7 +1462,11 @@ export class GameScene extends Phaser.Scene {
       : this.playerBullets.contains(second)
         ? second
         : null;
-    const enemy = this.enemies.contains(first) ? first : this.enemies.contains(second) ? second : null;
+    const enemy = this.enemies.contains(first)
+      ? first
+      : this.enemies.contains(second)
+        ? second
+        : null;
 
     if (!bullet || !enemy || !bullet.active || !enemy.active || this.ending) {
       return;
@@ -1409,11 +1491,11 @@ export class GameScene extends Phaser.Scene {
     this.destroyEnemyHpBar(enemy);
     enemy.disableBody(true, true);
     this.kills += 1;
-    this.killsText.setText(`Kills: ${this.kills}/${KILLS_TO_WIN}`);
+    this.killsText.setText(`Kills: ${this.kills}/${this.killsToWin}`);
     this.updateRunCreditsPreview();
     this.recalculateWave();
 
-    if (this.kills >= KILLS_TO_WIN) {
+    if (this.kills >= this.killsToWin) {
       void this.finishWin();
     }
   }
@@ -1445,7 +1527,11 @@ export class GameScene extends Phaser.Scene {
     const first = firstObject as Phaser.Physics.Arcade.Image;
     const second = secondObject as Phaser.Physics.Arcade.Image;
 
-    const enemy = this.enemies.contains(first) ? first : this.enemies.contains(second) ? second : null;
+    const enemy = this.enemies.contains(first)
+      ? first
+      : this.enemies.contains(second)
+        ? second
+        : null;
     const player = first === this.player ? first : second === this.player ? second : null;
 
     if (!enemy || !player || !enemy.active || !player.active || this.ending) {
@@ -1499,7 +1585,14 @@ export class GameScene extends Phaser.Scene {
     );
     shadow.setDepth(overlayDepth).setScrollFactor(0);
 
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.98);
+    const panel = this.add.rectangle(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      panelWidth,
+      panelHeight,
+      0x111827,
+      0.98
+    );
     panel.setStrokeStyle(2, 0x93c5fd, 0.85);
     panel.setDepth(overlayDepth + 1).setScrollFactor(0);
 
@@ -1548,7 +1641,11 @@ export class GameScene extends Phaser.Scene {
       () => {
         void this.tryRevive(reviveButton);
       },
-      { width: Math.min(panelWidth - 80, ui.modalWidth), height: ui.buttonHeight, fontSize: ui.buttonFont }
+      {
+        width: Math.min(panelWidth - 80, ui.modalWidth),
+        height: ui.buttonHeight,
+        fontSize: ui.buttonFont
+      }
     );
     reviveButton.setDepth(overlayDepth + 2);
     reviveButton.setScrollFactor(0);
@@ -1635,7 +1732,10 @@ export class GameScene extends Phaser.Scene {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
-  private async awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  private async awaitWithTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number
+  ): Promise<T | undefined> {
     return await Promise.race([
       promise,
       new Promise<undefined>((resolve) => {
@@ -1764,7 +1864,14 @@ export class GameScene extends Phaser.Scene {
     );
     shadow.setDepth(overlayDepth).setScrollFactor(0);
 
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.97);
+    const panel = this.add.rectangle(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      panelWidth,
+      panelHeight,
+      0x111827,
+      0.97
+    );
     panel.setStrokeStyle(2, 0x93c5fd, 0.8);
     panel.setDepth(overlayDepth + 1).setScrollFactor(0);
 
@@ -1869,10 +1976,68 @@ export class GameScene extends Phaser.Scene {
     this.clearGroup(this.pickups);
   }
 
+  private resolveLevelWaveState(kills: number): LevelWaveState {
+    const normalizedKills = Math.max(0, Math.floor(kills));
+    const waves = this.levelConfig.waves;
+    let waveIndex = 0;
+    for (let i = waves.length - 1; i >= 0; i -= 1) {
+      if (normalizedKills >= waves[i].startKills) {
+        waveIndex = i;
+        break;
+      }
+    }
+
+    const activeWave = waves[waveIndex] ?? waves[0];
+    const enemyKinds: EnemyKind[] =
+      activeWave.enemyKinds.length > 0 ? [...activeWave.enemyKinds] : ['standard'];
+    const wave = waveIndex + 1;
+
+    return {
+      wave,
+      totalWaves: waves.length,
+      enemyKinds,
+      waveConfig: {
+        wave,
+        spawnDelayMs: activeWave.spawnDelayMs,
+        maxEnemiesOnField: activeWave.maxEnemiesOnField,
+        enemySpeedMultiplier: activeWave.enemySpeedMultiplier,
+        enemyFireRateMultiplier: activeWave.enemyFireRateMultiplier,
+        patternWeights: { ...activeWave.patternWeights }
+      }
+    };
+  }
+
+  private updateWaveHud(): void {
+    if (!this.waveText) {
+      return;
+    }
+    if (!this.levelConfig.showWaveHud || this.totalWaves <= 1) {
+      this.waveText.setVisible(false);
+      return;
+    }
+    this.waveText.setVisible(true);
+    this.waveText.setText(`Wave: ${this.wave}/${this.totalWaves}`);
+  }
+
+  private applyWaveForCurrentKills(): { waveChanged: boolean; spawnDelayChanged: boolean } {
+    const previousWave = this.wave;
+    const previousSpawnDelay = this.waveConfig.spawnDelayMs;
+    const nextWave = this.resolveLevelWaveState(this.kills);
+
+    this.wave = nextWave.wave;
+    this.totalWaves = nextWave.totalWaves;
+    this.waveConfig = nextWave.waveConfig;
+    this.activeEnemyKinds = nextWave.enemyKinds;
+    this.updateWaveHud();
+
+    return {
+      waveChanged: this.wave !== previousWave,
+      spawnDelayChanged: this.waveConfig.spawnDelayMs !== previousSpawnDelay
+    };
+  }
+
   private startGameplayLoop(): void {
-    this.waveConfig = getWaveConfig(this.kills);
-    this.wave = this.waveConfig.wave;
-    this.waveText.setText(`Wave: ${this.wave}/${LEVEL_COUNT}`);
+    this.applyWaveForCurrentKills();
     this.recreateSpawnTimer();
 
     this.startedAt = this.time.now;
@@ -1890,6 +2055,7 @@ export class GameScene extends Phaser.Scene {
 
     yandexService.markGameplayStart();
     yandexService.trackEvent('start_run', {
+      level_id: this.levelConfig.id,
       hp_max: this.playerMaxHp,
       hp_upgrade_level: progressStore.data.hpUpgradeLevel,
       controls: this.isTouchControls ? 'touch' : 'keyboard'
@@ -1912,20 +2078,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private recalculateWave(): void {
-    const previousWave = this.wave;
-    const nextConfig = getWaveConfig(this.kills);
-    const waveChanged = nextConfig.wave !== previousWave;
-    const spawnDelayChanged = nextConfig.spawnDelayMs !== this.waveConfig.spawnDelayMs;
-
-    this.waveConfig = nextConfig;
-    this.wave = nextConfig.wave;
-    this.waveText.setText(`Wave: ${this.wave}/${LEVEL_COUNT}`);
+    const { waveChanged, spawnDelayChanged } = this.applyWaveForCurrentKills();
 
     if (spawnDelayChanged && this.gameplayStarted) {
       this.recreateSpawnTimer();
     }
 
-    if (waveChanged) {
+    if (waveChanged && this.levelConfig.showWaveHud && this.totalWaves > 1) {
       this.statusText.setText(`Wave ${this.wave} engaged!`);
       this.time.delayedCall(900, () => {
         if (!this.ending && this.pauseState === 'none') {
@@ -1959,6 +2118,7 @@ export class GameScene extends Phaser.Scene {
       await this.awaitWithTimeout(progressStore.save(), 1400);
 
       yandexService.trackEvent('loss', {
+        level_id: this.levelConfig.id,
         kills: this.kills,
         wave: this.wave,
         credits_earned: creditsEarned,
@@ -1980,7 +2140,8 @@ export class GameScene extends Phaser.Scene {
         kills: this.kills,
         creditsEarned,
         waveReached: this.wave,
-        reviveUsed: this.reviveUsed
+        reviveUsed: this.reviveUsed,
+        levelId: this.levelConfig.id
       };
       this.transitionWithWatchdog('GameOverScene', data);
     } catch (error) {
@@ -2006,6 +2167,7 @@ export class GameScene extends Phaser.Scene {
       audioService.playWin();
 
       yandexService.trackEvent('win', {
+        level_id: this.levelConfig.id,
         kills: this.kills,
         wave: this.wave,
         score,
@@ -2016,11 +2178,13 @@ export class GameScene extends Phaser.Scene {
 
       const data: WinSceneData = {
         kills: this.kills,
+        killsToWin: this.killsToWin,
         score,
         elapsedMs,
         creditsEarned,
         waveReached: this.wave,
-        reviveUsed: this.reviveUsed
+        reviveUsed: this.reviveUsed,
+        levelId: this.levelConfig.id
       };
       const started = this.transitionWithWatchdog('WinScene', data);
       if (!started) {

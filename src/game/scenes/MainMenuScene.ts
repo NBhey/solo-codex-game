@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import { PLAYABLE_LEVELS, type LevelId } from '../config/levelConfig';
 import { MAX_HP_UPGRADE_CAP } from '../logic/metaProgression';
 import { audioService } from '../services/AudioService';
 import { yandexService } from '../services/YandexService';
@@ -41,7 +42,7 @@ export class MainMenuScene extends Phaser.Scene {
     const step = ui.buttonHeight + ui.margin + 4;
 
     createTextButton(this, GAME_WIDTH / 2, buttonYStart, 'Start', () => {
-      void this.startGame();
+      this.showLevelSelect();
     }, { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont });
 
     createTextButton(this, GAME_WIDTH / 2, buttonYStart + step, 'Leaderboard', () => {
@@ -118,12 +119,76 @@ export class MainMenuScene extends Phaser.Scene {
     this.statsText.setText(this.buildStatsText());
   }
 
-  private async startGame(): Promise<void> {
+  private showLevelSelect(): void {
+    audioService.playUiClick();
+    this.clearModal();
+    const ui = getUiMetrics(this);
+    const panelWidth = Math.min(ui.modalLargeWidth, GAME_WIDTH - ui.margin * 2);
+    const panelHeight = Math.min(GAME_HEIGHT - ui.margin * 2, Math.round(panelWidth * 0.68));
+
+    const shadow = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
+    shadow.setInteractive({ useHandCursor: true });
+
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x111827, 0.98);
+    panel.setStrokeStyle(2, 0x93c5fd, 0.8);
+
+    const title = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.38, 'Select Level', {
+        fontFamily: 'Arial',
+        fontSize: px(ui.headingFont),
+        color: '#f8fafc'
+      })
+      .setOrigin(0.5);
+
+    const levelObjects: Phaser.GameObjects.GameObject[] = [];
+    const levelButtonWidth = Math.min(ui.buttonWidth, panelWidth - 120);
+    const baseY = GAME_HEIGHT / 2 - panelHeight * 0.16;
+    const rowStep = Math.max(ui.buttonHeight + 32, Math.round(panelHeight * 0.26));
+
+    PLAYABLE_LEVELS.forEach((level, index) => {
+      const y = baseY + index * rowStep;
+      const button = createTextButton(
+        this,
+        GAME_WIDTH / 2,
+        y,
+        level.title,
+        () => {
+          void this.startGame(level.id);
+        },
+        { width: levelButtonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
+      );
+
+      const subtitle = this.add
+        .text(GAME_WIDTH / 2, y + ui.buttonHeight * 0.58, level.menuSubtitle, {
+          fontFamily: 'Arial',
+          fontSize: px(ui.smallFont),
+          color: '#cbd5e1',
+          align: 'center'
+        })
+        .setOrigin(0.5, 0);
+
+      levelObjects.push(button, subtitle);
+    });
+
+    const closeButton = createTextButton(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 + panelHeight * 0.4, 'Close', () => {
+      audioService.playUiClick();
+      this.clearModal();
+    }, {
+      width: Math.min(ui.buttonWidth, panelWidth - 120),
+      height: ui.buttonHeight,
+      fontSize: ui.buttonFont
+    });
+
+    this.modalObjects.push(shadow, panel, title, ...levelObjects, closeButton);
+  }
+
+  private async startGame(levelId: LevelId): Promise<void> {
+    this.clearModal();
     audioService.playUiClick();
     await audioService.unlock();
     await ensureSceneRegistered(this, 'GameScene', async () => (await import('./GameScene')).GameScene);
     await yandexService.showInterstitial();
-    this.scene.start('GameScene');
+    this.scene.start('GameScene', { levelId });
   }
 
   private async showLeaderboard(): Promise<void> {

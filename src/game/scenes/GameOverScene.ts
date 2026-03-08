@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
+import type { LevelId } from '../config/levelConfig';
 import { audioService } from '../services/AudioService';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
@@ -11,10 +12,12 @@ interface GameOverData {
   creditsEarned?: number;
   waveReached?: number;
   reviveUsed?: boolean;
+  levelId?: LevelId;
 }
 
 interface GameSceneStartData {
   showInterstitialAfterRestart?: boolean;
+  levelId?: LevelId;
 }
 
 export class GameOverScene extends Phaser.Scene {
@@ -121,7 +124,8 @@ export class GameOverScene extends Phaser.Scene {
     this.statusText?.setText('Restarting...');
 
     const data: GameSceneStartData = {
-      showInterstitialAfterRestart: true
+      showInterstitialAfterRestart: true,
+      levelId: this.snapshotData.levelId
     };
     const started = safeStartSceneWithWatchdog(this, 'GameScene', data, {
       fallbackKey: 'MainMenuScene',
