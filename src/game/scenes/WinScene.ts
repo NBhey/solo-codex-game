@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, KILLS_TO_WIN } from '../config/gameConfig';
 import { audioService } from '../services/AudioService';
-import { yandexService } from '../services/YandexService';
 import { createTextButton } from '../ui/createTextButton';
 import { getUiMetrics, px } from '../ui/uiMetrics';
 import type { TextButton } from '../ui/createTextButton';
@@ -17,7 +16,6 @@ interface WinData {
 }
 
 export class WinScene extends Phaser.Scene {
-  private leaderboardText?: Phaser.GameObjects.Text;
   private snapshotData: WinData = {};
   private actionButtons: TextButton[] = [];
   private transitionInProgress = false;
@@ -39,23 +37,36 @@ export class WinScene extends Phaser.Scene {
     const ui = getUiMetrics(this);
     audioService.startMusic();
 
-    this.cameras.main.setBackgroundColor(0x061a12);
+    this.cameras.main.setBackgroundColor(0x04110d);
 
     this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT * 0.16, 'Victory!', {
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x020806, 0.72)
+      .setDepth(1);
+
+    const panelWidth = Math.min(GAME_WIDTH - 120, Math.round(ui.modalWidth * 0.88));
+    const panelHeight = Math.min(GAME_HEIGHT - 80, Math.round(ui.modalLargeWidth * 0.6));
+
+    this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, panelWidth, panelHeight, 0x0e241c, 0.96)
+      .setStrokeStyle(2, 0x5eead4, 0.85)
+      .setDepth(2);
+
+    this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - panelHeight * 0.33, 'Победа!', {
         fontFamily: 'Arial',
         fontSize: px(ui.sceneTitleFont),
         color: '#86efac'
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(3);
 
     this.add
       .text(
         GAME_WIDTH / 2,
-        GAME_HEIGHT * 0.34,
-        `Kills: ${kills} / ${KILLS_TO_WIN}\nWave reached: ${waveReached}\nScore: ${score}\nCredits earned: ${creditsEarned}\nTime: ${(
+        GAME_HEIGHT / 2 - panelHeight * 0.04,
+        `Убито: ${kills} / ${KILLS_TO_WIN}\nВолна: ${waveReached}\nСчет: ${score}\nКредитов: ${creditsEarned}\nВремя: ${(
           elapsedMs / 1000
-        ).toFixed(1)}s${reviveUsed ? '\nRevive used: Yes' : ''}`,
+        ).toFixed(1)}с${reviveUsed ? '\nРевайв использован: Да' : ''}`,
         {
           fontFamily: 'Arial',
           fontSize: px(ui.bodyFont),
@@ -64,25 +75,16 @@ export class WinScene extends Phaser.Scene {
           lineSpacing: ui.lineSpacing
         }
       )
-      .setOrigin(0.5);
-
-    this.leaderboardText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT * 0.5, 'Loading leaderboard preview...', {
-        fontFamily: 'Arial',
-        fontSize: px(ui.smallFont),
-        color: '#bbf7d0',
-        align: 'center',
-        lineSpacing: ui.lineSpacing
-      })
-      .setOrigin(0.5, 0);
+      .setOrigin(0.5)
+      .setDepth(3);
 
     const restartButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT * 0.79,
-      'Start New Game',
+      GAME_HEIGHT / 2 + panelHeight * 0.22,
+      'Начать сначала',
       () => {
-        void this.restartRun();
+        this.restartRun();
       },
       { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
@@ -90,13 +92,15 @@ export class WinScene extends Phaser.Scene {
     const mainMenuButton = createTextButton(
       this,
       GAME_WIDTH / 2,
-      GAME_HEIGHT * 0.9,
-      'Main Menu',
+      GAME_HEIGHT / 2 + panelHeight * 0.36,
+      'Выйти в меню',
       () => {
         this.goToMainMenu();
       },
       { width: ui.buttonWidth, height: ui.buttonHeight, fontSize: ui.buttonFont }
     );
+    restartButton.setDepth(3);
+    mainMenuButton.setDepth(3);
     this.actionButtons = [restartButton, mainMenuButton];
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
@@ -105,8 +109,6 @@ export class WinScene extends Phaser.Scene {
       this.actionButtons = [];
       this.transitionInProgress = false;
     });
-
-    void this.loadLeaderboardPreview();
   }
 
   private handleResize(): void {
@@ -117,18 +119,12 @@ export class WinScene extends Phaser.Scene {
     this.scene.restart(this.snapshotData);
   }
 
-  private async restartRun(): Promise<void> {
+  private restartRun(): void {
     if (!this.beginTransition()) {
       return;
     }
 
     audioService.playUiClick();
-    await yandexService.showInterstitial();
-
-    if (!this.scene.isActive()) {
-      return;
-    }
-
     const started = safeStartSceneWithWatchdog(this, 'GameScene', undefined, {
       fallbackKey: 'MainMenuScene',
       shouldFallback: () => this.transitionInProgress
@@ -150,20 +146,6 @@ export class WinScene extends Phaser.Scene {
     if (!started) {
       this.resetTransition();
     }
-  }
-
-  private async loadLeaderboardPreview(): Promise<void> {
-    const rows = await yandexService.getLeaderboardTop(3, yandexService.getLeaderboardName());
-    if (!this.leaderboardText || !this.leaderboardText.active) {
-      return;
-    }
-
-    if (!rows.length) {
-      this.leaderboardText.setText('Leaderboard is empty. Be the first winner!');
-      return;
-    }
-
-    this.leaderboardText.setText(['Top 3:', ...rows.map((row) => `${row.rank}. ${row.name} - ${row.score}`)].join('\n'));
   }
 
   private beginTransition(): boolean {

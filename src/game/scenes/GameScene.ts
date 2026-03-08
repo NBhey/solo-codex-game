@@ -184,7 +184,7 @@ export class GameScene extends Phaser.Scene {
       this.touchAimHintRect?.destroy();
       this.touchMoveHintText?.destroy();
       this.touchAimHintText?.destroy();
-      this.enemies?.children.each((child) => {
+      this.enemies?.children?.each((child) => {
         this.destroyEnemyHpBar(child as Phaser.Physics.Arcade.Image);
         return true;
       });
@@ -328,9 +328,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private syncBackgroundToCamera(): void {
-    const camera = this.cameras.main;
-    const viewWidth = Math.max(1, Math.round(camera.width / camera.zoom));
-    const viewHeight = Math.max(1, Math.round(camera.height / camera.zoom));
+    const camera = this.cameras?.main;
+    if (!camera) {
+      return;
+    }
+
+    const zoom = Number.isFinite(camera.zoom) && camera.zoom > 0 ? camera.zoom : 1;
+    const width = Number.isFinite(camera.width) ? camera.width : GAME_WIDTH;
+    const height = Number.isFinite(camera.height) ? camera.height : GAME_HEIGHT;
+    const viewWidth = Math.max(1, Math.round(width / zoom));
+    const viewHeight = Math.max(1, Math.round(height / zoom));
 
     if (this.backgroundGradient) {
       this.backgroundGradient.setSize(viewWidth, viewHeight);
@@ -535,6 +542,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
+    if (!this.scene.isActive()) {
+      return;
+    }
+
     this.syncBackgroundToCamera();
     this.applyHudLayout();
     this.layoutTouchHints();
@@ -1651,11 +1662,20 @@ export class GameScene extends Phaser.Scene {
     data?: object,
     fallbackKey: string = 'MainMenuScene',
     timeoutMs: number = 1400
-  ): void {
-    safeStartSceneWithWatchdog(this, key, data, {
+  ): boolean {
+    return safeStartSceneWithWatchdog(this, key, data, {
       fallbackKey,
       timeoutMs,
       shouldFallback: () => this.ending
+    });
+  }
+
+  private persistWinStats(score: number): void {
+    void (async () => {
+      await this.awaitWithTimeout(progressStore.save(), 1400);
+      await this.awaitWithTimeout(yandexService.submitScore(score), 1800);
+    })().catch((error) => {
+      console.error('[GameScene] Failed to persist win stats', error);
     });
   }
 
@@ -1983,9 +2003,6 @@ export class GameScene extends Phaser.Scene {
       const elapsedMs = Math.max(1, this.time.now - this.startedAt);
       const score = Math.max(1, Math.round(120000 - elapsedMs));
       const creditsEarned = progressStore.recordWin(score, this.kills);
-
-      await this.awaitWithTimeout(progressStore.save(), 1400);
-      await this.awaitWithTimeout(yandexService.submitScore(score), 1800);
       audioService.playWin();
 
       yandexService.trackEvent('win', {
@@ -1996,9 +2013,6 @@ export class GameScene extends Phaser.Scene {
         credits_earned: creditsEarned,
         revive_used: this.reviveUsed
       });
-      if (!this.scene.isActive()) {
-        return;
-      }
 
       const data: WinSceneData = {
         kills: this.kills,
@@ -2008,7 +2022,13 @@ export class GameScene extends Phaser.Scene {
         waveReached: this.wave,
         reviveUsed: this.reviveUsed
       };
-      this.transitionWithWatchdog('WinScene', data);
+      const started = this.transitionWithWatchdog('WinScene', data);
+      if (!started) {
+        this.startSceneSafely('MainMenuScene');
+        return;
+      }
+
+      this.persistWinStats(score);
     } catch (error) {
       console.error('[GameScene] Failed to finish win flow', error);
       this.startSceneSafely('MainMenuScene');
